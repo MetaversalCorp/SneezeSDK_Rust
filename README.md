@@ -1,0 +1,2 @@
+# SneezeRust
+Sneeze RUST Api
