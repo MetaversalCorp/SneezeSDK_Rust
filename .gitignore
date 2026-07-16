@@ -1,0 +1,15 @@
+# Rust/Cargo build output (WASM test modules + the guest SDK crate)
+target/
+
+# IDE and editor files
+.vs/
+.vscode/
+*.user
+*.suo
+*.ncb
+*.sdf
+*.opensdf
+
+# OS files
+Thumbs.db
+.DS_Store
