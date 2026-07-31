@@ -1,6 +1,9 @@
 # Rust/Cargo build output (WASM test modules + the guest SDK crate)
 target/
 
+# Cargo.lock is not committed for a library crate
+Cargo.lock
+
 # IDE and editor files
 .vs/
 .vscode/
