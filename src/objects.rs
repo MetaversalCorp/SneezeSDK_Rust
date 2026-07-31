@@ -19,6 +19,7 @@
 use crate::abi::*;
 use crate::ffi::PACKET;
 use crate::mapobject::SNEEZE_ABI_MAPOBJECT;
+use crate::moment::MOMENT;
 use crate::snapshot::{LOCATION, RESOURCE, CONTAINER, SIGNATURE, AGENT, SERVICE, MODULE};
 use crate::Snapshot;
 
@@ -38,10 +39,13 @@ impl FABRIC
 
    pub fn Index (&self) -> u64 { self.m_twFabricIx }
 
-   pub fn Console (&self) -> CONSOLE { CONSOLE { m_twFabricIx: self.m_twFabricIx } }
-   pub fn Storage (&self) -> STORAGE { STORAGE { m_twFabricIx: self.m_twFabricIx } }
-   pub fn Scene   (&self) -> SCENE   { SCENE   { m_twFabricIx: self.m_twFabricIx } }
-   pub fn Data    (&self) -> DATA    { DATA    { m_twFabricIx: self.m_twFabricIx } }
+   pub fn Console     (&self) -> CONSOLE     { CONSOLE     { m_twFabricIx: self.m_twFabricIx } }
+   pub fn Storage     (&self) -> STORAGE     { STORAGE     { m_twFabricIx: self.m_twFabricIx } }
+   pub fn Scene       (&self) -> SCENE       { SCENE       { m_twFabricIx: self.m_twFabricIx } }
+   pub fn Data        (&self) -> DATA        { DATA        { m_twFabricIx: self.m_twFabricIx } }
+   pub fn Chrono      (&self) -> CHRONO      { CHRONO      { m_twFabricIx: self.m_twFabricIx } }
+   pub fn Performance (&self) -> PERFORMANCE { PERFORMANCE { m_twFabricIx: self.m_twFabricIx } }
+   pub fn Timer       (&self) -> TIMER       { TIMER       { m_twFabricIx: self.m_twFabricIx } }
 
    // Typed read-only views over the private Open snapshot. LOCATION is built from
    // the resource reference; the rest borrow their section directly.
@@ -460,5 +464,122 @@ impl NODE
       pPacket.Write_Text  (sRml);
       
       pPacket.Send ();
+   }
+}
+
+// ---------------------------------------------------------------------------
+// CHRONO - the wall clock and the calendar (civil) logic behind a MOMENT. Bare
+// scalars (Time/Date) skip the struct; Now and the MOMENT constructors fill one.
+// All breakdown / formatting / parsing lives host-side; a MOMENT caches the
+// result and is read locally.
+// ---------------------------------------------------------------------------
+
+#[derive(Copy, Clone)]
+pub struct CHRONO
+{
+   m_twFabricIx: u64,
+}
+
+impl CHRONO
+{
+   /// Current wall time as a `tm` scalar (1/64 s since 1601-01-01, UTC).
+   pub fn Time (&self) -> i64
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_CHRONO, kSNEEZE_ABI_METHOD_CHRONO_TIME);
+
+      pPacket.Write_Qword (self.m_twFabricIx);
+
+      pPacket.Send ()
+   }
+
+   /// Current wall time as a `dt` scalar (Unix ms since 1970-01-01, UTC).
+   pub fn Date (&self) -> i64
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_CHRONO, kSNEEZE_ABI_METHOD_CHRONO_DATE);
+
+      pPacket.Write_Qword (self.m_twFabricIx);
+
+      pPacket.Send ()
+   }
+
+   /// Current wall time as a fully-populated MOMENT.
+   pub fn Now (&self) -> MOMENT { MOMENT::From_Now (self.m_twFabricIx) }
+}
+
+// ---------------------------------------------------------------------------
+// PERFORMANCE - the monotonic high-resolution clock (JS performance). Now is a
+// 100 ns count since a fixed origin; Origin is the wall MOMENT at that t0.
+// ---------------------------------------------------------------------------
+
+#[derive(Copy, Clone)]
+pub struct PERFORMANCE
+{
+   m_twFabricIx: u64,
+}
+
+impl PERFORMANCE
+{
+   /// Monotonic elapsed time since the origin, in 100 ns units.
+   pub fn Now (&self) -> i64
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_PERFORMANCE, kSNEEZE_ABI_METHOD_PERFORMANCE_NOW);
+
+      pPacket.Write_Qword (self.m_twFabricIx);
+
+      pPacket.Send ()
+   }
+
+   /// The wall-clock MOMENT the monotonic origin was anchored to (JS timeOrigin).
+   pub fn Origin (&self) -> MOMENT { MOMENT::From_Origin (self.m_twFabricIx) }
+}
+
+// ---------------------------------------------------------------------------
+// TIMER - one-shot (Set) and repeating (Interval) callbacks. Both return a
+// twTimerIx (0 = failure) and echo qwParam on the Notify. The unit is ticks
+// (1/64 s), milliseconds, or Hertz. The fire is delivered to INSTANCE::Timer.
+// ---------------------------------------------------------------------------
+
+#[derive(Copy, Clone)]
+pub struct TIMER
+{
+   m_twFabricIx: u64,
+}
+
+impl TIMER
+{
+   /// Arms a one-shot timer. `nValue` is interpreted per `eUnit`.
+   pub fn Set (&self, nValue: i32, eUnit: eSNEEZE_ABI_TIMER_UNIT, qwParam: u64) -> u64
+   {
+      self.Arm (nValue, eUnit, qwParam, false)
+   }
+
+   /// Arms a repeating timer that re-fires every period until cleared.
+   pub fn Interval (&self, nValue: i32, eUnit: eSNEEZE_ABI_TIMER_UNIT, qwParam: u64) -> u64
+   {
+      self.Arm (nValue, eUnit, qwParam, true)
+   }
+
+   /// Disarms a timer by its id. Returns true if it was found.
+   pub fn Clear (&self, twTimerIx: u64) -> bool
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_TIMER, kSNEEZE_ABI_METHOD_TIMER_CLEAR);
+
+      pPacket.Write_Qword (self.m_twFabricIx);
+      pPacket.Write_Qword (twTimerIx);
+
+      pPacket.Send () != 0
+   }
+
+   fn Arm (&self, nValue: i32, eUnit: eSNEEZE_ABI_TIMER_UNIT, qwParam: u64, bRepeat: bool) -> u64
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_TIMER, kSNEEZE_ABI_METHOD_TIMER_SET);
+
+      pPacket.Write_Qword  (self.m_twFabricIx);
+      pPacket.Write_Number (eUnit as i32);
+      pPacket.Write_Number (nValue);
+      pPacket.Write_Qword  (qwParam);
+      pPacket.Write_Number (if bRepeat { 1 } else { 0 });
+
+      pPacket.Send () as u64
    }
 }

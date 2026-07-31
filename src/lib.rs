@@ -47,14 +47,16 @@ pub mod abi;
 mod ffi;
 mod objects;
 mod mapobject;
+mod moment;
 mod snapshot;
 
 use nanoserde::DeJson;
 
 pub use abi::{SNEEZE_OBJECTIX_CLASS, SNEEZE_OBJECTIX_COMPOSE, SNEEZE_OBJECTIX_INDEX, SNEEZE_OBJECTIX_ERROR, SNEEZE_OBJECTIX_IDENTITY};
-pub use abi::eSNEEZE_ABI_SILO_SCOPE;
-pub use objects::{CONSOLE, DATA, FABRIC, NODE, SCENE, STORAGE};
+pub use abi::{eSNEEZE_ABI_SILO_SCOPE, eSNEEZE_ABI_TIMER_UNIT, eSNEEZE_ABI_CHRONO_ZONE};
+pub use objects::{CHRONO, CONSOLE, DATA, FABRIC, NODE, PERFORMANCE, SCENE, STORAGE, TIMER};
 pub use mapobject::SNEEZE_ABI_MAPOBJECT;
+pub use moment::MOMENT;
 pub use snapshot::{LOCATION, RESOURCE, CONTAINER, SIGNATURE, AGENT, SERVICE, MODULE};
 
 use snapshot::SNAPSHOT_DATA;
@@ -157,6 +159,10 @@ pub trait INSTANCE
    fn Open (pFabric: FABRIC) { let _ = pFabric; }
    fn Close (pFabric: FABRIC) { let _ = pFabric; }
    fn Shutdown () {}
+
+   /// A timer armed via `FABRIC::Timer` fired. `twTimerIx` is the id returned by
+   /// Set/Interval; `qwParam` is the cookie passed when arming. Default: ignore.
+   fn Timer (pFabric: FABRIC, twTimerIx: u64, qwParam: u64) { let _ = (pFabric, twTimerIx, qwParam); }
 }
 
 // ---------------------------------------------------------------------------
@@ -194,9 +200,46 @@ pub fn Free (nOffset: i32, nSize: i32)
    }
 }
 
-pub fn Notify (_nOffset: i32, _nSize: i32) -> i64
+// ---------------------------------------------------------------------------
+// EVENT - a decoded host -> guest Notify packet. The generated Notify export
+// runs Event_Parse and dispatches to the matching INSTANCE hook, so a module
+// only ever sees typed events (never the raw packet). Unknown events are inert
+// (forward-compatible: a new host event an old module has no hook for is
+// silently dropped).
+// ---------------------------------------------------------------------------
+
+#[doc(hidden)]
+pub enum EVENT
 {
-   0
+   Timer { pFabric: FABRIC, twTimerIx: u64, qwParam: u64 },
+   Unknown,
+}
+
+#[doc(hidden)]
+pub fn Event_Parse (nOffset: i32, nSize: i32) -> EVENT
+{
+   let mut eEvent = EVENT::Unknown;
+
+   // Header is 8 bytes (wType u16, wMethod u16, dwSize u32); payload follows.
+   if nOffset != 0  &&  nSize >= 8
+   {
+      let aByte = unsafe { core::slice::from_raw_parts (nOffset as u32 as *const u8, nSize as usize) };
+
+      let wType    = u16::from_le_bytes ([aByte[0], aByte[1]]);
+      let wMethod  = u16::from_le_bytes ([aByte[2], aByte[3]]);
+      let aPayload = &aByte[8..];
+
+      if wType == abi::kSNEEZE_ABI_TYPE_TIMER  &&  wMethod == abi::kSNEEZE_ABI_METHOD_TIMER_FIRED  &&  aPayload.len () >= 24
+      {
+         let twFabricIx = u64::from_le_bytes (aPayload[ 0.. 8].try_into ().unwrap ());
+         let twTimerIx  = u64::from_le_bytes (aPayload[ 8..16].try_into ().unwrap ());
+         let qwParam    = u64::from_le_bytes (aPayload[16..24].try_into ().unwrap ());
+
+         eEvent = EVENT::Timer { pFabric: FABRIC::New (twFabricIx), twTimerIx, qwParam };
+      }
+   }
+
+   eEvent
 }
 
 // ---------------------------------------------------------------------------
@@ -249,7 +292,15 @@ macro_rules! instance
       #[no_mangle]
       pub extern "C" fn Notify (nOffset: i32, nSize: i32) -> i64
       {
-         $crate::Notify (nOffset, nSize)
+         match $crate::Event_Parse (nOffset, nSize)
+         {
+            $crate::EVENT::Timer { pFabric, twTimerIx, qwParam } =>
+               <$instance as $crate::INSTANCE>::Timer (pFabric, twTimerIx, qwParam),
+
+            $crate::EVENT::Unknown => {},
+         }
+
+         0
       }
    };
 }

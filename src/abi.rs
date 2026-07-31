@@ -27,6 +27,9 @@ pub const kSNEEZE_ABI_TYPE_VIEWPORT                         : u16 =  5;
 pub const kSNEEZE_ABI_TYPE_SCENE                            : u16 =  6;
 pub const kSNEEZE_ABI_TYPE_FABRIC                           : u16 =  7;
 pub const kSNEEZE_ABI_TYPE_NODE                             : u16 =  8;
+pub const kSNEEZE_ABI_TYPE_CHRONO                           : u16 =  9;
+pub const kSNEEZE_ABI_TYPE_PERFORMANCE                      : u16 = 10;
+pub const kSNEEZE_ABI_TYPE_TIMER                            : u16 = 11;
 
 // CONSOLE methods.
 pub const kSNEEZE_ABI_METHOD_CONSOLE_LOG                    : u16 = 1;
@@ -85,6 +88,24 @@ pub const kSNEEZE_ABI_METHOD_NODE_PANEL                     : u16 = 8;
 pub const kSNEEZE_ABI_METHOD_DATA_HAS                       : u16 = 1;
 pub const kSNEEZE_ABI_METHOD_DATA_GET                       : u16 = 2;
 
+// CHRONO methods (wall clock + host-owned civil logic; fills a MOMENT).
+pub const kSNEEZE_ABI_METHOD_CHRONO_TIME                    : u16 = 1;
+pub const kSNEEZE_ABI_METHOD_CHRONO_DATE                    : u16 = 2;
+pub const kSNEEZE_ABI_METHOD_CHRONO_NOW                     : u16 = 3;
+pub const kSNEEZE_ABI_METHOD_CHRONO_MOMENT                  : u16 = 4;
+pub const kSNEEZE_ABI_METHOD_CHRONO_SET                     : u16 = 5;
+pub const kSNEEZE_ABI_METHOD_CHRONO_PARSE                   : u16 = 6;
+pub const kSNEEZE_ABI_METHOD_CHRONO_FORMAT                  : u16 = 7;
+
+// PERFORMANCE methods (monotonic high-resolution clock).
+pub const kSNEEZE_ABI_METHOD_PERFORMANCE_NOW                : u16 = 1;
+pub const kSNEEZE_ABI_METHOD_PERFORMANCE_ORIGIN             : u16 = 2;
+
+// TIMER methods. SET/CLEAR are guest -> host; FIRED is the host -> guest Notify.
+pub const kSNEEZE_ABI_METHOD_TIMER_SET                      : u16 = 1;
+pub const kSNEEZE_ABI_METHOD_TIMER_CLEAR                    : u16 = 2;
+pub const kSNEEZE_ABI_METHOD_TIMER_FIRED                    : u16 = 3;
+
 // TRUST levels - the container's verification standing (Container.eTrust in the
 // Open snapshot). Ordered least-to-most trusted.
 pub const kSNEEZE_ABI_TRUST_NONE                            : i32 = 0;
@@ -103,6 +124,27 @@ pub enum eSNEEZE_ABI_SILO_SCOPE
    kSNEEZE_ABI_SILO_SCOPE_PERMANENT_CONTAINER                     = 1,
    kSNEEZE_ABI_SILO_SCOPE_TEMPORARY_ORG                           = 2,
    kSNEEZE_ABI_SILO_SCOPE_TEMPORARY_CONTAINER                     = 3,
+}
+
+// TIMER_SET unit discriminant. TICK = 1/64 s count; MS = milliseconds; HZ =
+// frequency (period is 1/nValue seconds).
+#[repr(i32)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum eSNEEZE_ABI_TIMER_UNIT
+{
+   kSNEEZE_ABI_TIMER_UNIT_TICK                                    = 0,
+   kSNEEZE_ABI_TIMER_UNIT_MS                                      = 1,
+   kSNEEZE_ABI_TIMER_UNIT_HZ                                      = 2,
+}
+
+// CHRONO zone selector: how SET interprets its civil input and which cached
+// view FORMAT renders. (Getters read both views straight from the MOMENT.)
+#[repr(i32)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum eSNEEZE_ABI_CHRONO_ZONE
+{
+   kSNEEZE_ABI_CHRONO_ZONE_UTC                                    = 0,
+   kSNEEZE_ABI_CHRONO_ZONE_LOCAL                                  = 1,
 }
 
 // MAP_OBJECT class ids.
