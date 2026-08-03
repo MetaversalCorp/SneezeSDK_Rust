@@ -401,6 +401,19 @@ impl NODE
       pPacket.Send ();
    }
 
+   pub fn Rotation (&self, dX: f64, dY: f64, dZ: f64, dW: f64)
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NODE, kSNEEZE_ABI_METHOD_NODE_ROTATION);
+
+      pPacket.Write_Qword  (self.m_qwComposed);
+      pPacket.Write_Double (dX);
+      pPacket.Write_Double (dY);
+      pPacket.Write_Double (dZ);
+      pPacket.Write_Double (dW);
+
+      pPacket.Send ();
+   }
+
    pub fn Scale (&self, dScale: f64)
    {
       let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NODE, kSNEEZE_ABI_METHOD_NODE_SCALE);

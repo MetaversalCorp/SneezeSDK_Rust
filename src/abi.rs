@@ -74,7 +74,7 @@ pub const kSNEEZE_ABI_METHOD_SCENE_DIRECTIONAL_SET          : u16 = 8;
 pub const kSNEEZE_ABI_METHOD_SCENE_BACKGROUND_GET           : u16 = 9;
 pub const kSNEEZE_ABI_METHOD_SCENE_BACKGROUND_SET           : u16 = 10;
 
-// NODE methods (ROTATION 2 reserved, not yet implemented host-side).
+// NODE methods.
 pub const kSNEEZE_ABI_METHOD_NODE_POSITION                  : u16 = 1;
 pub const kSNEEZE_ABI_METHOD_NODE_ROTATION                  : u16 = 2;
 pub const kSNEEZE_ABI_METHOD_NODE_SCALE                     : u16 = 3;
