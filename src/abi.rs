@@ -30,6 +30,7 @@ pub const kSNEEZE_ABI_TYPE_NODE                             : u16 =  8;
 pub const kSNEEZE_ABI_TYPE_CHRONO                           : u16 =  9;
 pub const kSNEEZE_ABI_TYPE_PERFORMANCE                      : u16 = 10;
 pub const kSNEEZE_ABI_TYPE_TIMER                            : u16 = 11;
+pub const kSNEEZE_ABI_TYPE_SERVICES                         : u16 = 12;
 
 // CONSOLE methods.
 pub const kSNEEZE_ABI_METHOD_CONSOLE_LOG                    : u16 = 1;
@@ -62,17 +63,24 @@ pub const kSNEEZE_ABI_METHOD_VIEWPORT_POSITION_SET          : u16 = 2;
 pub const kSNEEZE_ABI_METHOD_VIEWPORT_ROTATION_GET          : u16 = 3;
 pub const kSNEEZE_ABI_METHOD_VIEWPORT_ROTATION_SET          : u16 = 4;
 
-// SCENE methods (globals 5..10 not implemented yet host-side).
-pub const kSNEEZE_ABI_METHOD_SCENE_NODE_ROOT                : u16 = 1;
-pub const kSNEEZE_ABI_METHOD_SCENE_NODE_MAP                 : u16 = 2;
-pub const kSNEEZE_ABI_METHOD_SCENE_NODE_OPEN                : u16 = 3;
-pub const kSNEEZE_ABI_METHOD_SCENE_NODE_CLOSE               : u16 = 4;
-pub const kSNEEZE_ABI_METHOD_SCENE_AMBIENT_GET              : u16 = 5;
-pub const kSNEEZE_ABI_METHOD_SCENE_AMBIENT_SET              : u16 = 6;
-pub const kSNEEZE_ABI_METHOD_SCENE_DIRECTIONAL_GET          : u16 = 7;
-pub const kSNEEZE_ABI_METHOD_SCENE_DIRECTIONAL_SET          : u16 = 8;
-pub const kSNEEZE_ABI_METHOD_SCENE_BACKGROUND_GET           : u16 = 9;
-pub const kSNEEZE_ABI_METHOD_SCENE_BACKGROUND_SET           : u16 = 10;
+// SCENE methods. The node-tree calls are DEPRECATED - use the FABRIC subsystem
+// instead; they remain only so already-deployed modules keep working. The scene
+// globals (ambient/directional/background) are parked until Stage 4 renumbers
+// this enum from 1 after the deprecated methods are removed.
+pub const kSNEEZE_ABI_METHOD_SCENE_NODE_ROOT                : u16 = 1;    // DEPRECATED - use kSNEEZE_ABI_METHOD_FABRIC_NODE_ROOT
+pub const kSNEEZE_ABI_METHOD_SCENE_NODE_MAP_DATA            : u16 = 2;    // DEPRECATED - use kSNEEZE_ABI_METHOD_FABRIC_NODE_MAP_DATA
+pub const kSNEEZE_ABI_METHOD_SCENE_NODE_OPEN                : u16 = 3;    // DEPRECATED - use kSNEEZE_ABI_METHOD_FABRIC_NODE_OPEN
+pub const kSNEEZE_ABI_METHOD_SCENE_NODE_CLOSE               : u16 = 4;    // DEPRECATED - use kSNEEZE_ABI_METHOD_FABRIC_NODE_CLOSE
+
+// FABRIC methods (type 7) - the node-tree API. Order is deliberate: the two
+// map-service calls first (browser-assigned mapping), then the four guest-
+// assigned node-tree calls.
+pub const kSNEEZE_ABI_METHOD_FABRIC_NODE_MAP_SERVICE        : u16 = 1;
+pub const kSNEEZE_ABI_METHOD_FABRIC_NODE_MAP_SERVICE_EX     : u16 = 2;
+pub const kSNEEZE_ABI_METHOD_FABRIC_NODE_MAP_DATA           : u16 = 3;
+pub const kSNEEZE_ABI_METHOD_FABRIC_NODE_ROOT               : u16 = 4;
+pub const kSNEEZE_ABI_METHOD_FABRIC_NODE_OPEN               : u16 = 5;
+pub const kSNEEZE_ABI_METHOD_FABRIC_NODE_CLOSE              : u16 = 6;
 
 // NODE methods.
 pub const kSNEEZE_ABI_METHOD_NODE_POSITION                  : u16 = 1;
@@ -105,6 +113,10 @@ pub const kSNEEZE_ABI_METHOD_PERFORMANCE_ORIGIN             : u16 = 2;
 pub const kSNEEZE_ABI_METHOD_TIMER_SET                      : u16 = 1;
 pub const kSNEEZE_ABI_METHOD_TIMER_CLEAR                    : u16 = 2;
 pub const kSNEEZE_ABI_METHOD_TIMER_FIRED                    : u16 = 3;
+
+// SERVICES methods (read-only service reads, keyed by service name).
+pub const kSNEEZE_ABI_METHOD_SERVICES_HAS                   : u16 = 1;
+pub const kSNEEZE_ABI_METHOD_SERVICES_GET                   : u16 = 2;
 
 // TRUST levels - the container's verification standing (Container.eTrust in the
 // Open snapshot). Ordered least-to-most trusted.

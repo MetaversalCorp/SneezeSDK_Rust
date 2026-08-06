@@ -12,37 +12,43 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The typed API surface: FABRIC and its subsystems (CONSOLE, STORAGE, SCENE)
-//! plus NODE. Each object is a thin, copyable handle that packs and sends the
-//! matching packet. Everything hangs off a `FABRIC`.
+//! The typed API surface: HOST and its subsystem views (CONSOLE, STORAGE, SCENE,
+//! FABRIC, ...) plus NODE. Each view is a thin, copyable handle that packs and
+//! sends the matching packet. Everything hangs off a `HOST`.
 
 use crate::abi::*;
 use crate::ffi::PACKET;
 use crate::mapobject::SNEEZE_ABI_MAPOBJECT;
+use crate::mapservice::MAP_SERVICE;
 use crate::moment::MOMENT;
-use crate::snapshot::{LOCATION, RESOURCE, CONTAINER, SIGNATURE, AGENT, SERVICE, MODULE};
+use crate::snapshot::{LOCATION, RESOURCE, CONTAINER, SIGNATURE, AGENT, MODULE};
 use crate::Snapshot;
 
 // ---------------------------------------------------------------------------
-// FABRIC - the root handle. All subsystems are reached through it.
+// HOST - the root handle: the browser host as the guest module sees it. The SDK
+// allocates one per fabric at Open and hands your INSTANCE a &HOST that stays
+// valid until after Close. Every subsystem view is reached through it. Scene
+// node construction lives on the FABRIC view (Fabric ()).
 // ---------------------------------------------------------------------------
 
 #[derive(Copy, Clone)]
-pub struct FABRIC
+pub struct HOST
 {
    m_twFabricIx: u64,
 }
 
-impl FABRIC
+impl HOST
 {
-   pub fn New (twFabricIx: u64) -> Self { FABRIC { m_twFabricIx: twFabricIx } }
+   pub fn New (twFabricIx: u64) -> Self { HOST { m_twFabricIx: twFabricIx } }
 
    pub fn Index (&self) -> u64 { self.m_twFabricIx }
 
    pub fn Console     (&self) -> CONSOLE     { CONSOLE     { m_twFabricIx: self.m_twFabricIx } }
    pub fn Storage     (&self) -> STORAGE     { STORAGE     { m_twFabricIx: self.m_twFabricIx } }
    pub fn Scene       (&self) -> SCENE       { SCENE       { m_twFabricIx: self.m_twFabricIx } }
+   pub fn Fabric      (&self) -> FABRIC      { FABRIC      { m_twFabricIx: self.m_twFabricIx } }
    pub fn Data        (&self) -> DATA        { DATA        { m_twFabricIx: self.m_twFabricIx } }
+   pub fn Services    (&self) -> SERVICES    { SERVICES    { m_twFabricIx: self.m_twFabricIx } }
    pub fn Chrono      (&self) -> CHRONO      { CHRONO      { m_twFabricIx: self.m_twFabricIx } }
    pub fn Performance (&self) -> PERFORMANCE { PERFORMANCE { m_twFabricIx: self.m_twFabricIx } }
    pub fn Timer       (&self) -> TIMER       { TIMER       { m_twFabricIx: self.m_twFabricIx } }
@@ -54,7 +60,6 @@ impl FABRIC
    pub fn Signature (&self) -> &'static SIGNATURE { &Snapshot ().Signature }
    pub fn Agent     (&self) -> &'static AGENT     { &Snapshot ().Agent }
    pub fn Container (&self) -> &'static CONTAINER { &Snapshot ().Container }
-   pub fn Services  (&self) -> &'static [SERVICE] { &Snapshot ().Services }
    pub fn Modules   (&self) -> &'static [MODULE]  { &Snapshot ().Modules }
 }
 
@@ -310,36 +315,159 @@ impl DATA
 }
 
 // ---------------------------------------------------------------------------
-// SCENE - node-tree construction on the fabric's container.
+// SERVICES - the fabric's declared services, read-only and on-demand, keyed by
+// service name (the DATA model, one level by name rather than a dotted path). A
+// service object may carry any fields the fabric author chose, so Get returns
+// the named service's whole JSON object as text (None for an absent service)
+// for the module to parse itself.
+// ---------------------------------------------------------------------------
+
+#[derive(Copy, Clone)]
+pub struct SERVICES
+{
+   m_twFabricIx: u64,
+}
+
+impl SERVICES
+{
+   pub fn Has (&self, sName: &str) -> bool
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_SERVICES, kSNEEZE_ABI_METHOD_SERVICES_HAS);
+
+      pPacket.Write_Qword (self.m_twFabricIx);
+      pPacket.Write_Text  (sName);
+
+      pPacket.Send () != 0
+   }
+
+   /// Reads the named service's whole JSON object as text. Returns None for an
+   /// absent service. Sizes the buffer in one probe and, if needed, one re-read.
+   pub fn Get (&self, sName: &str) -> Option<String>
+   {
+      let mut sResult: Option<String> = None;
+      let mut aByte = vec![0u8; 256];
+      let nProbe = self.Get_Into (sName, &mut aByte);
+
+      if nProbe > 0
+      {
+         let mut nSizeNeeded = nProbe as usize;
+         let mut bValid      = true;
+
+         if nSizeNeeded > aByte.len ()
+         {
+            aByte = vec![0u8; nSizeNeeded];
+            let nAgain = self.Get_Into (sName, &mut aByte);
+
+            if nAgain > 0
+            {
+               nSizeNeeded = nAgain as usize;
+            }
+            else
+            {
+               bValid = false;
+            }
+         }
+
+         if bValid
+         {
+            let nCount = if nSizeNeeded < aByte.len () { nSizeNeeded } else { aByte.len () };
+
+            aByte.truncate (nCount);
+            sResult = String::from_utf8 (aByte).ok ();
+         }
+      }
+
+      sResult
+   }
+
+   fn Get_Into (&self, sName: &str, aByte: &mut [u8]) -> i64
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_SERVICES, kSNEEZE_ABI_METHOD_SERVICES_GET);
+
+      pPacket.Write_Qword (self.m_twFabricIx);
+      pPacket.Write_Text  (sName);
+      pPacket.Write_Bytes (aByte.as_ptr (), aByte.len ());
+
+      pPacket.Send ()
+   }
+}
+
+// ---------------------------------------------------------------------------
+// SCENE - scene-global state (type 6): ambient light, directional light, and
+// background. Its methods (the Ambient/Directional/Background get/set pairs) are
+// not implemented yet; this view exists so `HOST::Scene ()` is ready for them.
 // ---------------------------------------------------------------------------
 
 #[derive(Copy, Clone)]
 pub struct SCENE
 {
+   #[allow(dead_code)]
    m_twFabricIx: u64,
 }
 
 impl SCENE
 {
-   /// Creates the fabric's root node from a map object.
-   pub fn Node_Root (&self, pObject: &SNEEZE_ABI_MAPOBJECT) -> NODE
+}
+
+// ---------------------------------------------------------------------------
+// FABRIC - the node-tree API on the fabric's container (type 7). The first two
+// hand the fabric to a browser-assigned map service (after which the module no
+// longer mutates its nodes directly); the rest are the guest-assigned node-tree
+// calls. Reached through `HOST::Fabric ()`. Method order matches sneeze_abi.h.
+// ---------------------------------------------------------------------------
+
+#[derive(Copy, Clone)]
+pub struct FABRIC
+{
+   m_twFabricIx: u64,
+}
+
+impl FABRIC
+{
+   /// Connects a map service from a caller-filled MAP_SERVICE (from the module's
+   /// own knowledge, or from `HOST::Services ().Get (name)` which it parses).
+   /// Returns true if the host accepted the connection request.
+   pub fn Node_Map_Service (&self, pService: &MAP_SERVICE) -> bool
    {
-      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_SCENE, kSNEEZE_ABI_METHOD_SCENE_NODE_ROOT);
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_FABRIC, kSNEEZE_ABI_METHOD_FABRIC_NODE_MAP_SERVICE);
 
       pPacket.Write_Qword (self.m_twFabricIx);
-      pPacket.Write_Bytes (pObject.Pointer (), SNEEZE_ABI_MAPOBJECT::SIZE);
+      pPacket.Write_Bytes (pService.Pointer (), MAP_SERVICE::SIZE);
 
-      NODE { m_qwComposed: pPacket.Send () as u64 }
+      pPacket.Send () != 0
+   }
+
+   /// Connects a map service the host reads from the fabric's Services[name] and
+   /// fills the struct itself. Returns true if the host accepted the request.
+   pub fn Node_Map_Service_Ex (&self, sName: &str) -> bool
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_FABRIC, kSNEEZE_ABI_METHOD_FABRIC_NODE_MAP_SERVICE_EX);
+
+      pPacket.Write_Qword (self.m_twFabricIx);
+      pPacket.Write_Text  (sName);
+
+      pPacket.Send () != 0
    }
 
    /// Builds the fabric's node tree from the MSF "Data" block at `sPath` (an empty
    /// path is the "Data" object itself). Returns the created root node.
-   pub fn Node_Map (&self, sPath: &str) -> NODE
+   pub fn Node_Map_Data (&self, sPath: &str) -> NODE
    {
-      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_SCENE, kSNEEZE_ABI_METHOD_SCENE_NODE_MAP);
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_FABRIC, kSNEEZE_ABI_METHOD_FABRIC_NODE_MAP_DATA);
 
       pPacket.Write_Qword (self.m_twFabricIx);
       pPacket.Write_Text  (sPath);
+
+      NODE { m_qwComposed: pPacket.Send () as u64 }
+   }
+
+   /// Creates the fabric's root node from a map object.
+   pub fn Node_Root (&self, pObject: &SNEEZE_ABI_MAPOBJECT) -> NODE
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_FABRIC, kSNEEZE_ABI_METHOD_FABRIC_NODE_ROOT);
+
+      pPacket.Write_Qword (self.m_twFabricIx);
+      pPacket.Write_Bytes (pObject.Pointer (), SNEEZE_ABI_MAPOBJECT::SIZE);
 
       NODE { m_qwComposed: pPacket.Send () as u64 }
    }
@@ -349,7 +477,7 @@ impl SCENE
    /// parent index may be named directly - no parent `NODE` handle is required.
    pub fn Node_Open (&self, pObject: &SNEEZE_ABI_MAPOBJECT) -> NODE
    {
-      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_SCENE, kSNEEZE_ABI_METHOD_SCENE_NODE_OPEN);
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_FABRIC, kSNEEZE_ABI_METHOD_FABRIC_NODE_OPEN);
 
       pPacket.Write_Bytes (pObject.Pointer (), SNEEZE_ABI_MAPOBJECT::SIZE);
 
@@ -359,7 +487,7 @@ impl SCENE
    /// Removes and deletes a node.
    pub fn Node_Close (&self, pNode: NODE) -> bool
    {
-      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_SCENE, kSNEEZE_ABI_METHOD_SCENE_NODE_CLOSE);
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_FABRIC, kSNEEZE_ABI_METHOD_FABRIC_NODE_CLOSE);
 
       pPacket.Write_Qword (pNode.m_qwComposed);
 

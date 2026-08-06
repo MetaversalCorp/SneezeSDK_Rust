@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! `SNEEZE_ABI_MAPOBJECT` - the 528-byte map-object wire struct and its fluent builder. Fill one
-//! in guest memory, then hand it to `SCENE::Node_Root` / `SCENE::Node_Open`,
+//! in guest memory, then hand it to `FABRIC::Node_Root` / `FABRIC::Node_Open`,
 //! which pass its (offset, length) to the host. Layout mirrors
 //! `include/Map_Object.h` / `sdk/include/sneeze_abi.h` field for field.
 

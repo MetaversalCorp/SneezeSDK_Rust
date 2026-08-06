@@ -16,9 +16,10 @@
 //!
 //! A module talks to the engine through exactly one host import (`Sneeze.Call`)
 //! and a handful of exports. This crate hides that ABI behind typed objects:
-//! a [`FABRIC`] handed to your [`INSTANCE`] at `Open`, from which you reach
-//! [`CONSOLE`], [`STORAGE`], [`DATA`], and [`SCENE`], build nodes with [`SNEEZE_ABI_MAPOBJECT`], and mutate
-//! them through [`NODE`].
+//! a [`HOST`] handed to your [`INSTANCE`] at `Open` (a `&HOST`, persistent for
+//! that fabric's lifetime), from which you reach [`CONSOLE`], [`STORAGE`],
+//! [`DATA`], [`SERVICES`], [`SCENE`], and [`FABRIC`] (the node-tree API); build
+//! nodes with [`SNEEZE_ABI_MAPOBJECT`] and mutate them through [`NODE`].
 //!
 //! ```ignore
 //! use sneeze::*;
@@ -26,13 +27,13 @@
 //! struct MY_MODULE;
 //! impl INSTANCE for MY_MODULE
 //! {
-//!    fn Open (pFabric: FABRIC)
+//!    fn Open (pHost: &HOST)
 //!    {
-//!       pFabric.Console ().Log ("hello from wasm");
+//!       pHost.Console ().Log ("hello from wasm");
 //!
 //!       let mut root = SNEEZE_ABI_MAPOBJECT::Physical ();
 //!       root.Name ("Stool").Reference ("assets/Stool.glb");
-//!       pFabric.Scene ().Node_Root (&root);
+//!       pHost.Fabric ().Node_Root (&root);
 //!    }
 //! }
 //!
@@ -47,6 +48,7 @@ pub mod abi;
 mod ffi;
 mod objects;
 mod mapobject;
+mod mapservice;
 mod moment;
 mod snapshot;
 
@@ -54,16 +56,17 @@ use nanoserde::DeJson;
 
 pub use abi::{SNEEZE_OBJECTIX_CLASS, SNEEZE_OBJECTIX_COMPOSE, SNEEZE_OBJECTIX_INDEX, SNEEZE_OBJECTIX_ERROR, SNEEZE_OBJECTIX_IDENTITY};
 pub use abi::{eSNEEZE_ABI_SILO_SCOPE, eSNEEZE_ABI_TIMER_UNIT, eSNEEZE_ABI_CHRONO_ZONE};
-pub use objects::{CHRONO, CONSOLE, DATA, FABRIC, NODE, PERFORMANCE, SCENE, STORAGE, TIMER};
+pub use objects::{CHRONO, CONSOLE, DATA, FABRIC, HOST, NODE, PERFORMANCE, SCENE, SERVICES, STORAGE, TIMER};
 pub use mapobject::SNEEZE_ABI_MAPOBJECT;
+pub use mapservice::MAP_SERVICE;
 pub use moment::MOMENT;
-pub use snapshot::{LOCATION, RESOURCE, CONTAINER, SIGNATURE, AGENT, SERVICE, MODULE};
+pub use snapshot::{LOCATION, RESOURCE, CONTAINER, SIGNATURE, AGENT, MODULE};
 
 use snapshot::SNAPSHOT_DATA;
 
 // ---------------------------------------------------------------------------
 // The parsed Open snapshot, held privately for the life of the module instance.
-// A module never touches it directly; it reads the typed views off its FABRIC
+// A module never touches it directly; it reads the typed views off its HOST
 // (Location/Resource/Signature/Agent/Container). Single-threaded wasm, written
 // once by the generated Open before user code runs, read-only thereafter.
 // ---------------------------------------------------------------------------
@@ -102,7 +105,7 @@ pub fn Snapshot_Load (pSnapshot: SNAPSHOT)
 // guest memory via the Alloc handshake, and hands the generated Open its
 // (offset, size). Snapshot_Load parses it once into the private SNAPSHOT_STORE
 // before user code runs. A module never sees this type; it reads the parsed
-// data through the typed FABRIC views (Location/Resource/Signature/Agent/
+// data through the typed HOST views (Location/Resource/Signature/Agent/
 // Container). The raw bytes are valid only for the duration of the generated
 // Open - the engine frees the guest block as soon as Open returns.
 // ---------------------------------------------------------------------------
@@ -148,21 +151,21 @@ impl SNAPSHOT
 // ---------------------------------------------------------------------------
 // INSTANCE - the lifecycle a guest wasm instance implements. Wire it up with
 // instance!. (The engine calls the running module a WASM_INSTANCE; a declared
-// module in the manifest is the separate MODULE record.) Open receives only the
-// FABRIC handle; the Open snapshot is parsed privately and read through the
-// fabric's typed views.
+// module in the manifest is the separate MODULE record.) Open receives a &HOST
+// (persistent for the fabric's lifetime); the Open snapshot is parsed privately
+// and read through the host's typed views.
 // ---------------------------------------------------------------------------
 
 pub trait INSTANCE
 {
    fn Init () {}
-   fn Open (pFabric: FABRIC) { let _ = pFabric; }
-   fn Close (pFabric: FABRIC) { let _ = pFabric; }
+   fn Open (pHost: &HOST) { let _ = pHost; }
+   fn Close (pHost: &HOST) { let _ = pHost; }
    fn Shutdown () {}
 
-   /// A timer armed via `FABRIC::Timer` fired. `twTimerIx` is the id returned by
+   /// A timer armed via `HOST::Timer` fired. `twTimerIx` is the id returned by
    /// Set/Interval; `qwParam` is the cookie passed when arming. Default: ignore.
-   fn Timer (pFabric: FABRIC, twTimerIx: u64, qwParam: u64) { let _ = (pFabric, twTimerIx, qwParam); }
+   fn Timer (pHost: &HOST, twTimerIx: u64, qwParam: u64) { let _ = (pHost, twTimerIx, qwParam); }
 }
 
 // ---------------------------------------------------------------------------
@@ -201,6 +204,88 @@ pub fn Free (nOffset: i32, nSize: i32)
 }
 
 // ---------------------------------------------------------------------------
+// HOST registry - one persistent HOST per fabric, keyed by fabric index. The
+// generated Open acquires it (creating on first use); callbacks find it; the
+// generated Close releases it. Boxed so each HOST keeps a stable address as
+// fabrics come and go. Single-threaded wasm, so the static mut is sound. One
+// WASM instance can serve several fabrics, so several HOSTs may be live at once.
+// ---------------------------------------------------------------------------
+
+static mut HOST_STORE: Vec<Box<HOST>> = Vec::new ();
+
+#[doc(hidden)]
+pub fn Host_Acquire (twFabricIx: u64) -> &'static HOST
+{
+   unsafe
+   {
+      let pStore = &mut *core::ptr::addr_of_mut! (HOST_STORE);
+      let mut pResult: *const HOST = core::ptr::null ();
+
+      for pHost in pStore.iter ()
+      {
+         if pHost.Index () == twFabricIx
+         {
+            pResult = pHost.as_ref () as *const HOST;
+            break;
+         }
+      }
+
+      if pResult.is_null ()
+      {
+         pStore.push (Box::new (HOST::New (twFabricIx)));
+         pResult = pStore.last ().unwrap ().as_ref () as *const HOST;
+      }
+
+      &*pResult
+   }
+}
+
+#[doc(hidden)]
+pub fn Host_Find (twFabricIx: u64) -> Option<&'static HOST>
+{
+   unsafe
+   {
+      let pStore = &mut *core::ptr::addr_of_mut! (HOST_STORE);
+      let mut pResult: Option<&'static HOST> = None;
+
+      for pHost in pStore.iter ()
+      {
+         if pHost.Index () == twFabricIx
+         {
+            pResult = Some (&*(pHost.as_ref () as *const HOST));
+            break;
+         }
+      }
+
+      pResult
+   }
+}
+
+#[doc(hidden)]
+pub fn Host_Release (twFabricIx: u64)
+{
+   unsafe
+   {
+      let pStore = &mut *core::ptr::addr_of_mut! (HOST_STORE);
+      let mut nIndex = usize::MAX;
+
+      for (nIz, pHost) in pStore.iter ().enumerate ()
+      {
+         if pHost.Index () == twFabricIx
+         {
+            nIndex = nIz;
+            break;
+         }
+      }
+
+      if nIndex != usize::MAX
+      {
+         pStore.remove (nIndex);
+      }
+   }
+}
+
+// ---------------------------------------------------------------------------
 // EVENT - a decoded host -> guest Notify packet. The generated Notify export
 // runs Event_Parse and dispatches to the matching INSTANCE hook, so a module
 // only ever sees typed events (never the raw packet). Unknown events are inert
@@ -211,7 +296,7 @@ pub fn Free (nOffset: i32, nSize: i32)
 #[doc(hidden)]
 pub enum EVENT
 {
-   Timer { pFabric: FABRIC, twTimerIx: u64, qwParam: u64 },
+   Timer { pHost: &'static HOST, twTimerIx: u64, qwParam: u64 },
    Unknown,
 }
 
@@ -235,7 +320,10 @@ pub fn Event_Parse (nOffset: i32, nSize: i32) -> EVENT
          let twTimerIx  = u64::from_le_bytes (aPayload[ 8..16].try_into ().unwrap ());
          let qwParam    = u64::from_le_bytes (aPayload[16..24].try_into ().unwrap ());
 
-         eEvent = EVENT::Timer { pFabric: FABRIC::New (twFabricIx), twTimerIx, qwParam };
+         if let Some (pHost) = Host_Find (twFabricIx)
+         {
+            eEvent = EVENT::Timer { pHost, twTimerIx, qwParam };
+         }
       }
    }
 
@@ -262,13 +350,18 @@ macro_rules! instance
       pub extern "C" fn Open (twFabricIx: u64, nOffset: i32, nSize: i32)
       {
          $crate::Snapshot_Load ($crate::SNAPSHOT::From_Raw (nOffset, nSize));
-         <$instance as $crate::INSTANCE>::Open ($crate::FABRIC::New (twFabricIx));
+         <$instance as $crate::INSTANCE>::Open ($crate::Host_Acquire (twFabricIx));
       }
 
       #[no_mangle]
       pub extern "C" fn Close (twFabricIx: u64)
       {
-         <$instance as $crate::INSTANCE>::Close ($crate::FABRIC::New (twFabricIx));
+         if let Some (pHost) = $crate::Host_Find (twFabricIx)
+         {
+            <$instance as $crate::INSTANCE>::Close (pHost);
+         }
+
+         $crate::Host_Release (twFabricIx);
       }
 
       #[no_mangle]
@@ -294,8 +387,8 @@ macro_rules! instance
       {
          match $crate::Event_Parse (nOffset, nSize)
          {
-            $crate::EVENT::Timer { pFabric, twTimerIx, qwParam } =>
-               <$instance as $crate::INSTANCE>::Timer (pFabric, twTimerIx, qwParam),
+            $crate::EVENT::Timer { pHost, twTimerIx, qwParam } =>
+               <$instance as $crate::INSTANCE>::Timer (pHost, twTimerIx, qwParam),
 
             $crate::EVENT::Unknown => {},
          }

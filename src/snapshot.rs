@@ -15,8 +15,8 @@
 //! The typed snapshot views. The engine pushes one immutable JSON document at
 //! Open; the SDK parses it once (privately) into SNAPSHOT_DATA and exposes each
 //! section as a read-only view class reached through the FABRIC handle
-//! (RESOURCE / CONTAINER / SIGNATURE / AGENT / SERVICE / MODULE), plus LOCATION,
-//! a URL parser derived from RESOURCE's reference. A module never touches the
+//! (RESOURCE / CONTAINER / SIGNATURE / AGENT / MODULE), plus LOCATION, a URL
+//! parser derived from RESOURCE's reference. A module never touches the
 //! raw JSON: fields are private, read through getter methods. Every field is
 //! defaulted, so a missing, partial, or rearranged blob yields empty values
 //! rather than a failure.
@@ -149,27 +149,6 @@ impl AGENT
 }
 
 // ---------------------------------------------------------------------------
-// SERVICE - a declared service: name/type/endpoint plus the module names it uses.
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Default, DeJson)]
-pub struct SERVICE
-{
-   #[nserde(default)] sName                                 : String,
-   #[nserde(default)] sType                                 : String,
-   #[nserde(default)] sEndpoint                             : String,
-   #[nserde(default)] aModules                              : Vec<String>,
-}
-
-impl SERVICE
-{
-   pub fn Name     (&self) -> &str        { &self.sName }
-   pub fn Type     (&self) -> &str        { &self.sType }
-   pub fn Endpoint (&self) -> &str        { &self.sEndpoint }
-   pub fn Modules  (&self) -> &[String]   { &self.aModules }
-}
-
-// ---------------------------------------------------------------------------
 // MODULE - a declared wasm module (url + SRI hash).
 // ---------------------------------------------------------------------------
 
@@ -280,6 +259,5 @@ pub struct SNAPSHOT_DATA
    #[nserde(default)] pub (crate) Container                 : CONTAINER,
    #[nserde(default)] pub (crate) Signature                 : SIGNATURE,
    #[nserde(default)] pub (crate) Agent                     : AGENT,
-   #[nserde(default)] pub (crate) Services                  : Vec<SERVICE>,
    #[nserde(default)] pub (crate) Modules                   : Vec<MODULE>,
 }
