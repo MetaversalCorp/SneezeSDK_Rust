@@ -54,8 +54,44 @@ pub const kSNEEZE_ABI_METHOD_STORAGE_GET                    : u16 = 2;
 pub const kSNEEZE_ABI_METHOD_STORAGE_SET                    : u16 = 3;
 pub const kSNEEZE_ABI_METHOD_STORAGE_REMOVE                 : u16 = 4;
 
-// NETWORK methods (not implemented yet host-side).
-pub const kSNEEZE_ABI_METHOD_NETWORK_FETCH                  : u16 = 1;
+// NETWORK methods. Two contiguous blocks: REQUEST (an XHR-shaped HTTP request)
+// holds 1-29, SOCKET (a browser-shaped WebSocket) holds 30-59. Within each block
+// the numbers past the calls are host -> guest Notify events, not calls: REQUEST
+// COMPLETED and PROGRESS, and SOCKET OPENED, RECEIVED, FAILED and CLOSED.
+pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_OPEN           : u16 =  1;
+pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_HEADER_SET     : u16 =  2;
+pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_TIMEOUT_SET    : u16 =  3;
+pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_SEND           : u16 =  4;
+pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_ABORT          : u16 =  5;
+pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_CLOSE          : u16 =  6;
+pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_STATE          : u16 =  7;
+pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_STATUS         : u16 =  8;
+pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_STATUS_TEXT    : u16 =  9;
+pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_URL            : u16 = 10;
+pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_HEADER_GET     : u16 = 11;
+pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_HEADER_ALL     : u16 = 12;
+pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_BODY           : u16 = 13;
+pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_SIZE           : u16 = 14;
+pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_CONTENT_TYPE   : u16 = 15;
+pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_ERROR          : u16 = 16;
+pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_IS_CACHED      : u16 = 17;
+pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_COMPLETED      : u16 = 18;
+pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_PROGRESS       : u16 = 19;
+pub const kSNEEZE_ABI_METHOD_NETWORK_SOCKET_OPEN            : u16 = 30;
+pub const kSNEEZE_ABI_METHOD_NETWORK_SOCKET_SEND_TEXT       : u16 = 31;
+pub const kSNEEZE_ABI_METHOD_NETWORK_SOCKET_SEND_BINARY     : u16 = 32;
+pub const kSNEEZE_ABI_METHOD_NETWORK_SOCKET_CLOSE           : u16 = 33;
+pub const kSNEEZE_ABI_METHOD_NETWORK_SOCKET_STATE           : u16 = 34;
+pub const kSNEEZE_ABI_METHOD_NETWORK_SOCKET_BUFFERED        : u16 = 35;
+pub const kSNEEZE_ABI_METHOD_NETWORK_SOCKET_PROTOCOL        : u16 = 36;
+pub const kSNEEZE_ABI_METHOD_NETWORK_SOCKET_URL             : u16 = 37;
+pub const kSNEEZE_ABI_METHOD_NETWORK_SOCKET_RECV            : u16 = 38;
+pub const kSNEEZE_ABI_METHOD_NETWORK_SOCKET_ERROR           : u16 = 39;
+pub const kSNEEZE_ABI_METHOD_NETWORK_SOCKET_OPENED          : u16 = 40;
+pub const kSNEEZE_ABI_METHOD_NETWORK_SOCKET_RECEIVED        : u16 = 41;
+pub const kSNEEZE_ABI_METHOD_NETWORK_SOCKET_FAILED          : u16 = 42;
+pub const kSNEEZE_ABI_METHOD_NETWORK_SOCKET_CLOSED          : u16 = 43;
+pub const kSNEEZE_ABI_METHOD_NETWORK_SOCKET_FREE            : u16 = 44;
 
 // VIEWPORT methods (not implemented yet host-side).
 pub const kSNEEZE_ABI_METHOD_VIEWPORT_POSITION_GET          : u16 = 1;
@@ -147,6 +183,77 @@ pub enum eSNEEZE_ABI_TIMER_UNIT
    kSNEEZE_ABI_TIMER_UNIT_TICK                                    = 0,
    kSNEEZE_ABI_TIMER_UNIT_MS                                      = 1,
    kSNEEZE_ABI_TIMER_UNIT_HZ                                      = 2,
+}
+
+// REQUEST_OPEN's verb. GET is 0 because it is the default and the only verb the
+// engine caches; every other verb bypasses the cache.
+#[repr(i32)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum eSNEEZE_ABI_REQUEST_VERB
+{
+   kSNEEZE_ABI_REQUEST_VERB_GET                                   = 0,
+   kSNEEZE_ABI_REQUEST_VERB_POST                                  = 1,
+   kSNEEZE_ABI_REQUEST_VERB_PUT                                   = 2,
+   kSNEEZE_ABI_REQUEST_VERB_PATCH                                 = 3,
+   kSNEEZE_ABI_REQUEST_VERB_DELETE                                = 4,
+   kSNEEZE_ABI_REQUEST_VERB_HEAD                                  = 5,
+}
+
+// REQUEST_STATE, the analog of XHR's readyState. COMPLETE means the server
+// answered - it says nothing about the HTTP status, which may well be a 404.
+#[repr(i32)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum eSNEEZE_ABI_REQUEST_STATE
+{
+   kSNEEZE_ABI_REQUEST_STATE_IDLE                                 = 0,
+   kSNEEZE_ABI_REQUEST_STATE_SENDING                              = 1,
+   kSNEEZE_ABI_REQUEST_STATE_COMPLETE                             = 2,
+   kSNEEZE_ABI_REQUEST_STATE_FAILED                               = 3,
+   kSNEEZE_ABI_REQUEST_STATE_ABORTED                              = 4,
+}
+
+impl eSNEEZE_ABI_REQUEST_STATE
+{
+   /// One of the two ABI enums read back off the wire rather than written to it,
+   /// so it needs the reverse mapping. An unrecognized value reads as IDLE.
+   pub fn From_Value (nValue: i64) -> Self
+   {
+      match nValue
+      {
+         1 => Self::kSNEEZE_ABI_REQUEST_STATE_SENDING,
+         2 => Self::kSNEEZE_ABI_REQUEST_STATE_COMPLETE,
+         3 => Self::kSNEEZE_ABI_REQUEST_STATE_FAILED,
+         4 => Self::kSNEEZE_ABI_REQUEST_STATE_ABORTED,
+         _ => Self::kSNEEZE_ABI_REQUEST_STATE_IDLE,
+      }
+   }
+}
+
+// SOCKET_STATE mirrors WebSocket.readyState exactly, values included.
+#[repr(i32)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum eSNEEZE_ABI_SOCKET_STATE
+{
+   kSNEEZE_ABI_SOCKET_STATE_CONNECTING                            = 0,
+   kSNEEZE_ABI_SOCKET_STATE_OPEN                                  = 1,
+   kSNEEZE_ABI_SOCKET_STATE_CLOSING                               = 2,
+   kSNEEZE_ABI_SOCKET_STATE_CLOSED                                = 3,
+}
+
+impl eSNEEZE_ABI_SOCKET_STATE
+{
+   /// Read back off the wire, like REQUEST_STATE. An unrecognized value reads as
+   /// CLOSED, the safe answer for a handle the host no longer knows.
+   pub fn From_Value (nValue: i64) -> Self
+   {
+      match nValue
+      {
+         0 => Self::kSNEEZE_ABI_SOCKET_STATE_CONNECTING,
+         1 => Self::kSNEEZE_ABI_SOCKET_STATE_OPEN,
+         2 => Self::kSNEEZE_ABI_SOCKET_STATE_CLOSING,
+         _ => Self::kSNEEZE_ABI_SOCKET_STATE_CLOSED,
+      }
+   }
 }
 
 // CHRONO zone selector: how SET interprets its civil input and which cached

@@ -52,6 +52,7 @@ impl HOST
    pub fn Chrono      (&self) -> CHRONO      { CHRONO      { m_twFabricIx: self.m_twFabricIx } }
    pub fn Performance (&self) -> PERFORMANCE { PERFORMANCE { m_twFabricIx: self.m_twFabricIx } }
    pub fn Timer       (&self) -> TIMER       { TIMER       { m_twFabricIx: self.m_twFabricIx } }
+   pub fn Network     (&self) -> NETWORK     { NETWORK     { m_twFabricIx: self.m_twFabricIx } }
 
    // Typed read-only views over the private Open snapshot. LOCATION is built from
    // the resource reference; the rest borrow their section directly.
@@ -722,5 +723,496 @@ impl TIMER
       pPacket.Write_Number (if bRepeat { 1 } else { 0 });
 
       pPacket.Send () as u64
+   }
+}
+
+// ---------------------------------------------------------------------------
+// NETWORK - the fabric's window onto the network: HTTP through REQUEST, and
+// WebSockets through SOCKET. Reached through `HOST::Network`.
+//
+// A request URL is resolved against the fabric's own URL, exactly like a node's
+// resource or a module reference, so "api/state" means the fabric's folder and
+// "/api/state" means the host root.
+//
+// A socket URL is not resolved: it must be an absolute ws:// or wss:// URL, the
+// same rule the browser's WebSocket constructor applies.
+// ---------------------------------------------------------------------------
+
+#[derive(Copy, Clone)]
+pub struct NETWORK
+{
+   pub (crate) m_twFabricIx: u64,
+}
+
+impl NETWORK
+{
+   /// Opens one HTTP exchange. The returned REQUEST is invalid (`IsValid` false)
+   /// if the host refused, which happens when the URL is empty or the fabric is
+   /// no longer live.
+   pub fn Request_Open (&self, eVerb: eSNEEZE_ABI_REQUEST_VERB, sUrl: &str) -> REQUEST
+   {
+      self.Request_Open_Ex (eVerb, sUrl, "")
+   }
+
+   /// As `Request_Open`, but pins the response to a subresource-integrity hash
+   /// ("sha256-<hex>"); the request fails if the bytes do not match.
+   pub fn Request_Open_Ex (&self, eVerb: eSNEEZE_ABI_REQUEST_VERB, sUrl: &str, sIntegrity: &str) -> REQUEST
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NETWORK, kSNEEZE_ABI_METHOD_NETWORK_REQUEST_OPEN);
+
+      pPacket.Write_Qword  (self.m_twFabricIx);
+      pPacket.Write_Number (eVerb as i32);
+      pPacket.Write_Text   (sUrl);
+      pPacket.Write_Text   (sIntegrity);
+
+      REQUEST { m_twRequestIx: pPacket.Send () as u64 }
+   }
+
+   /// Opens one WebSocket connection. The returned SOCKET is invalid (`IsValid`
+   /// false) if the host refused, which happens when the URL is not an absolute
+   /// ws:// or wss:// URL or the fabric is no longer live.
+   pub fn Socket_Open (&self, sUrl: &str) -> SOCKET
+   {
+      self.Socket_Open_Ex (sUrl, "")
+   }
+
+   /// As `Socket_Open`, but offers subprotocols, comma-separated in order of
+   /// preference.
+   pub fn Socket_Open_Ex (&self, sUrl: &str, sProtocol: &str) -> SOCKET
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NETWORK, kSNEEZE_ABI_METHOD_NETWORK_SOCKET_OPEN);
+
+      pPacket.Write_Qword (self.m_twFabricIx);
+      pPacket.Write_Text  (sUrl);
+      pPacket.Write_Text  (sProtocol);
+
+      SOCKET { m_twSocketIx: pPacket.Send () as u64 }
+   }
+}
+
+// ---------------------------------------------------------------------------
+// REQUEST - one HTTP exchange, shaped like the browser's XMLHttpRequest. Open one
+// from `HOST::Network`, configure it, send it, and read the answer when
+// `INSTANCE::Request` fires. A REQUEST is a thin copyable handle, so passing it
+// around costs nothing and every copy names the same exchange.
+//
+// Lifetime is the guest's: `Close` is the mirror of `Request_Open` and must be
+// called, or the host keeps the response buffered for the fabric's life. A GET is
+// cached like any other engine fetch; every other verb bypasses the cache.
+// ---------------------------------------------------------------------------
+
+#[derive(Copy, Clone)]
+pub struct REQUEST
+{
+   m_twRequestIx: u64,
+}
+
+impl REQUEST
+{
+   pub fn New (twRequestIx: u64) -> Self { REQUEST { m_twRequestIx: twRequestIx } }
+
+   pub fn Index (&self) -> u64 { self.m_twRequestIx }
+
+   /// True unless the opening call failed.
+   pub fn IsValid (&self) -> bool { self.m_twRequestIx != 0 }
+
+   /// Sets one request header. Before the send; ignored afterwards.
+   pub fn Header_Set (&self, sName: &str, sValue: &str) -> bool
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NETWORK, kSNEEZE_ABI_METHOD_NETWORK_REQUEST_HEADER_SET);
+
+      pPacket.Write_Qword (self.m_twRequestIx);
+      pPacket.Write_Text  (sName);
+      pPacket.Write_Text  (sValue);
+
+      pPacket.Send () != 0
+   }
+
+   /// Caps this exchange at nMilli milliseconds. Before the send.
+   pub fn Timeout_Set (&self, nMilli: i32) -> bool
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NETWORK, kSNEEZE_ABI_METHOD_NETWORK_REQUEST_TIMEOUT_SET);
+
+      pPacket.Write_Qword  (self.m_twRequestIx);
+      pPacket.Write_Number (nMilli);
+
+      pPacket.Send () != 0
+   }
+
+   /// Issues the request with no body - once per REQUEST.
+   pub fn Send (&self) -> bool
+   {
+      self.Issue (core::ptr::null (), 0)
+   }
+
+   /// Issues the request with a UTF-8 text body. Meaningless on a GET or HEAD.
+   pub fn Send_Text (&self, sText: &str) -> bool
+   {
+      self.Issue (sText.as_ptr (), sText.len ())
+   }
+
+   /// Issues the request with a binary body. Meaningless on a GET or HEAD.
+   pub fn Send_Bytes (&self, aByte: &[u8]) -> bool
+   {
+      self.Issue (aByte.as_ptr (), aByte.len ())
+   }
+
+   /// Stops delivery to this module. The handle stays alive to be read and closed.
+   pub fn Abort (&self) -> bool
+   {
+      self.Scalar (kSNEEZE_ABI_METHOD_NETWORK_REQUEST_ABORT) != 0
+   }
+
+   /// Releases the handle and discards the response. The mirror of Request_Open.
+   pub fn Close (&self) -> bool
+   {
+      self.Scalar (kSNEEZE_ABI_METHOD_NETWORK_REQUEST_CLOSE) != 0
+   }
+
+   /// Where the exchange stands, the analog of XHR's readyState.
+   pub fn State (&self) -> eSNEEZE_ABI_REQUEST_STATE
+   {
+      eSNEEZE_ABI_REQUEST_STATE::From_Value (self.Scalar (kSNEEZE_ABI_METHOD_NETWORK_REQUEST_STATE))
+   }
+
+   /// The HTTP status, or 0 if the server never answered.
+   pub fn Status (&self) -> i32 { self.Scalar (kSNEEZE_ABI_METHOD_NETWORK_REQUEST_STATUS) as i32 }
+
+   /// The response byte count.
+   pub fn Size (&self) -> i64 { self.Scalar (kSNEEZE_ABI_METHOD_NETWORK_REQUEST_SIZE) }
+
+   /// True if the engine answered this from its cache instead of the network.
+   pub fn IsCached (&self) -> bool { self.Scalar (kSNEEZE_ABI_METHOD_NETWORK_REQUEST_IS_CACHED) != 0 }
+
+   /// The reason phrase matching `Status`.
+   pub fn Status_Text (&self) -> String { self.Value_Get (kSNEEZE_ABI_METHOD_NETWORK_REQUEST_STATUS_TEXT, None) }
+
+   /// The final URL, after any redirects.
+   pub fn Url (&self) -> String { self.Value_Get (kSNEEZE_ABI_METHOD_NETWORK_REQUEST_URL, None) }
+
+   /// Every response header, as CRLF-separated "Name: value" lines.
+   pub fn Header_All (&self) -> String { self.Value_Get (kSNEEZE_ABI_METHOD_NETWORK_REQUEST_HEADER_ALL, None) }
+
+   /// The response's content type.
+   pub fn Content_Type (&self) -> String { self.Value_Get (kSNEEZE_ABI_METHOD_NETWORK_REQUEST_CONTENT_TYPE, None) }
+
+   /// The transport error, empty on success. Not an HTTP status - a 404 is a
+   /// successful exchange with no error text.
+   pub fn Error (&self) -> String { self.Value_Get (kSNEEZE_ABI_METHOD_NETWORK_REQUEST_ERROR, None) }
+
+   /// One response header by name, empty if absent.
+   pub fn Header (&self, sName: &str) -> String
+   {
+      self.Value_Get (kSNEEZE_ABI_METHOD_NETWORK_REQUEST_HEADER_GET, Some (sName))
+   }
+
+   /// The response body as text (XHR responseText). Invalid UTF-8 yields empty.
+   pub fn Text (&self) -> String
+   {
+      String::from_utf8 (self.Body ()).unwrap_or_default ()
+   }
+
+   /// The response body. Bodies are the one read that can be megabytes, so this
+   /// asks for the size first (a zero-length buffer is a size query the host
+   /// answers without writing) and then reads it exactly, rather than probing into
+   /// a small buffer the way the header-sized strings above do.
+   pub fn Body (&self) -> Vec<u8>
+   {
+      let mut aResult: Vec<u8> = Vec::new ();
+      let     nNeeded          = self.Value_Into (kSNEEZE_ABI_METHOD_NETWORK_REQUEST_BODY, None, core::ptr::null (), 0);
+
+      if nNeeded > 0
+      {
+         let mut aByte = vec![0u8; nNeeded as usize];
+         let     nRead = self.Value_Into (kSNEEZE_ABI_METHOD_NETWORK_REQUEST_BODY, None, aByte.as_ptr (), aByte.len ());
+
+         // The body cannot grow between the two calls (the host snapshots it on
+         // completion), so a short read means the handle went away underneath us.
+         if nRead > 0
+         {
+            if (nRead as usize) < aByte.len ()
+            {
+               aByte.truncate (nRead as usize);
+            }
+
+            aResult = aByte;
+         }
+      }
+
+      aResult
+   }
+
+   // The shape shared by every handle-only scalar read (state/status/size/cached).
+   fn Scalar (&self, wMethod: u16) -> i64
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NETWORK, wMethod);
+
+      pPacket.Write_Qword (self.m_twRequestIx);
+
+      pPacket.Send ()
+   }
+
+   // The send, with an optional body the three public forms supply differently.
+   fn Issue (&self, pByte: *const u8, nLength: usize) -> bool
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NETWORK, kSNEEZE_ABI_METHOD_NETWORK_REQUEST_SEND);
+
+      pPacket.Write_Qword (self.m_twRequestIx);
+      pPacket.Write_Bytes (pByte, nLength);
+
+      pPacket.Send () != 0
+   }
+
+   // One out-buffer read. sName carries the header name for HEADER_GET and is None
+   // for every other read, which takes no argument beyond the handle.
+   fn Value_Into (&self, wMethod: u16, sName: Option<&str>, pByte: *const u8, nLength: usize) -> i64
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NETWORK, wMethod);
+
+      pPacket.Write_Qword (self.m_twRequestIx);
+
+      if let Some (sText) = sName
+      {
+         pPacket.Write_Text (sText);
+      }
+
+      pPacket.Write_Bytes (pByte, nLength);
+
+      pPacket.Send ()
+   }
+
+   // The STORAGE::Get dance: one probe into a small buffer, then one exact re-read
+   // if the value did not fit. Every string read this way is header-sized, so the
+   // probe almost always wins.
+   fn Value_Get (&self, wMethod: u16, sName: Option<&str>) -> String
+   {
+      let mut sResult = String::new ();
+      let mut aByte   = vec![0u8; 256];
+      let     nProbe  = self.Value_Into (wMethod, sName, aByte.as_ptr (), aByte.len ());
+
+      if nProbe > 0
+      {
+         let mut nSizeNeeded = nProbe as usize;
+         let mut bValid      = true;
+
+         if nSizeNeeded > aByte.len ()
+         {
+            aByte = vec![0u8; nSizeNeeded];
+
+            let nAgain = self.Value_Into (wMethod, sName, aByte.as_ptr (), aByte.len ());
+
+            if nAgain > 0
+            {
+               nSizeNeeded = nAgain as usize;
+            }
+            else
+            {
+               bValid = false;
+            }
+         }
+
+         if bValid
+         {
+            let nCount = if nSizeNeeded < aByte.len () { nSizeNeeded } else { aByte.len () };
+
+            aByte.truncate (nCount);
+            sResult = String::from_utf8 (aByte).unwrap_or_default ();
+         }
+      }
+
+      sResult
+   }
+}
+
+// ---------------------------------------------------------------------------
+// SOCKET - one WebSocket connection, shaped like the browser's. Open one from
+// `HOST::Network`, then let the four INSTANCE hooks drive it: `Socket_Opened`,
+// `Socket_Received`, `Socket_Failed`, `Socket_Closed`. Like REQUEST it is a thin
+// copyable handle, so every copy names the same connection.
+//
+// Two calls end a socket, and they are not the same one. `Close` runs the closing
+// handshake and leaves the handle readable, so a guest can still ask what the
+// close code was. `Free` is the mirror of `Socket_Open` and must be called, or
+// the host holds the connection for the fabric's life.
+//
+// Every `Socket_Received` must be followed by a `Recv`: a message stays queued
+// until it is taken, and a guest that stops taking them eventually overflows the
+// queue, after which messages are dropped and `Error` says so.
+// ---------------------------------------------------------------------------
+
+#[derive(Copy, Clone)]
+pub struct SOCKET
+{
+   m_twSocketIx: u64,
+}
+
+impl SOCKET
+{
+   pub fn New (twSocketIx: u64) -> Self { SOCKET { m_twSocketIx: twSocketIx } }
+
+   pub fn Index (&self) -> u64 { self.m_twSocketIx }
+
+   /// True unless the opening call failed.
+   pub fn IsValid (&self) -> bool { self.m_twSocketIx != 0 }
+
+   /// Sends a UTF-8 text frame. Refused unless the socket is OPEN.
+   pub fn Send_Text (&self, sText: &str) -> bool
+   {
+      self.Issue (kSNEEZE_ABI_METHOD_NETWORK_SOCKET_SEND_TEXT, sText.as_ptr (), sText.len ())
+   }
+
+   /// Sends a binary frame. Refused unless the socket is OPEN.
+   pub fn Send_Bytes (&self, aByte: &[u8]) -> bool
+   {
+      self.Issue (kSNEEZE_ABI_METHOD_NETWORK_SOCKET_SEND_BINARY, aByte.as_ptr (), aByte.len ())
+   }
+
+   /// Runs the closing handshake with a normal-closure code and no reason.
+   pub fn Close (&self) -> bool
+   {
+      self.Close_Ex (1000, "")
+   }
+
+   /// Runs the closing handshake with a specific code and reason (the protocol
+   /// caps the reason at 123 bytes).
+   pub fn Close_Ex (&self, wCode: i32, sReason: &str) -> bool
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NETWORK, kSNEEZE_ABI_METHOD_NETWORK_SOCKET_CLOSE);
+
+      pPacket.Write_Qword  (self.m_twSocketIx);
+      pPacket.Write_Number (wCode);
+      pPacket.Write_Text   (sReason);
+
+      pPacket.Send () != 0
+   }
+
+   /// Releases the handle. The mirror of `Socket_Open`.
+   pub fn Free (&self) -> bool
+   {
+      self.Scalar (kSNEEZE_ABI_METHOD_NETWORK_SOCKET_FREE) != 0
+   }
+
+   /// Where the connection stands, mirroring `WebSocket.readyState`.
+   pub fn State (&self) -> eSNEEZE_ABI_SOCKET_STATE
+   {
+      eSNEEZE_ABI_SOCKET_STATE::From_Value (self.Scalar (kSNEEZE_ABI_METHOD_NETWORK_SOCKET_STATE))
+   }
+
+   /// Bytes handed to the socket but not yet on the wire (bufferedAmount).
+   pub fn Buffered (&self) -> i64 { self.Scalar (kSNEEZE_ABI_METHOD_NETWORK_SOCKET_BUFFERED) }
+
+   /// The socket's URL, known from the moment it opens.
+   pub fn Url (&self) -> String { self.Value_Get (kSNEEZE_ABI_METHOD_NETWORK_SOCKET_URL) }
+
+   /// The negotiated subprotocol - empty until the socket opens, and empty after
+   /// if none was agreed.
+   pub fn Protocol (&self) -> String { self.Value_Get (kSNEEZE_ABI_METHOD_NETWORK_SOCKET_PROTOCOL) }
+
+   /// The last error, empty unless something failed.
+   pub fn Error (&self) -> String { self.Value_Get (kSNEEZE_ABI_METHOD_NETWORK_SOCKET_ERROR) }
+
+   /// Takes the head of the receive queue as text. Invalid UTF-8 yields empty.
+   pub fn Recv_Text (&self) -> String
+   {
+      String::from_utf8 (self.Recv ()).unwrap_or_default ()
+   }
+
+   /// Takes the head of the receive queue, empty when nothing is waiting. A
+   /// message is only taken once it has somewhere to fit, so the size query first
+   /// is not merely an optimization - it is what keeps a message that would not
+   /// fit from being consumed and lost.
+   pub fn Recv (&self) -> Vec<u8>
+   {
+      let mut aResult: Vec<u8> = Vec::new ();
+      let     nNeeded          = self.Value_Into (kSNEEZE_ABI_METHOD_NETWORK_SOCKET_RECV, core::ptr::null (), 0);
+
+      if nNeeded > 0
+      {
+         let mut aByte = vec![0u8; nNeeded as usize];
+         let     nRead = self.Value_Into (kSNEEZE_ABI_METHOD_NETWORK_SOCKET_RECV, aByte.as_ptr (), aByte.len ());
+
+         if nRead > 0
+         {
+            if (nRead as usize) < aByte.len ()
+            {
+               aByte.truncate (nRead as usize);
+            }
+
+            aResult = aByte;
+         }
+      }
+
+      aResult
+   }
+
+   // The three shapes every socket method past the open takes, mirroring
+   // REQUEST's: a handle-only scalar, a frame send, and an out-buffer read.
+   fn Scalar (&self, wMethod: u16) -> i64
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NETWORK, wMethod);
+
+      pPacket.Write_Qword (self.m_twSocketIx);
+
+      pPacket.Send ()
+   }
+
+   fn Issue (&self, wMethod: u16, pByte: *const u8, nLength: usize) -> bool
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NETWORK, wMethod);
+
+      pPacket.Write_Qword (self.m_twSocketIx);
+      pPacket.Write_Bytes (pByte, nLength);
+
+      pPacket.Send () != 0
+   }
+
+   fn Value_Into (&self, wMethod: u16, pByte: *const u8, nLength: usize) -> i64
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NETWORK, wMethod);
+
+      pPacket.Write_Qword (self.m_twSocketIx);
+      pPacket.Write_Bytes (pByte, nLength);
+
+      pPacket.Send ()
+   }
+
+   // The probe-then-reread string read, as REQUEST does it.
+   fn Value_Get (&self, wMethod: u16) -> String
+   {
+      let mut sResult = String::new ();
+      let mut aByte   = vec![0u8; 256];
+      let     nProbe  = self.Value_Into (wMethod, aByte.as_ptr (), aByte.len ());
+
+      if nProbe > 0
+      {
+         let mut nSizeNeeded = nProbe as usize;
+         let mut bValid      = true;
+
+         if nSizeNeeded > aByte.len ()
+         {
+            aByte = vec![0u8; nSizeNeeded];
+
+            let nAgain = self.Value_Into (wMethod, aByte.as_ptr (), aByte.len ());
+
+            if nAgain > 0
+            {
+               nSizeNeeded = nAgain as usize;
+            }
+            else
+            {
+               bValid = false;
+            }
+         }
+
+         if bValid
+         {
+            let nCount = if nSizeNeeded < aByte.len () { nSizeNeeded } else { aByte.len () };
+
+            aByte.truncate (nCount);
+            sResult = String::from_utf8 (aByte).unwrap_or_default ();
+         }
+      }
+
+      sResult
    }
 }

@@ -18,8 +18,9 @@
 //! and a handful of exports. This crate hides that ABI behind typed objects:
 //! a [`HOST`] handed to your [`INSTANCE`] at `Open` (a `&HOST`, persistent for
 //! that fabric's lifetime), from which you reach [`CONSOLE`], [`STORAGE`],
-//! [`DATA`], [`SERVICES`], [`SCENE`], and [`FABRIC`] (the node-tree API); build
-//! nodes with [`SNEEZE_ABI_MAPOBJECT`] and mutate them through [`NODE`].
+//! [`DATA`], [`SERVICES`], [`NETWORK`], [`SCENE`], and [`FABRIC`] (the node-tree
+//! API); build nodes with [`SNEEZE_ABI_MAPOBJECT`] and mutate them through
+//! [`NODE`], and fetch over HTTP with [`REQUEST`].
 //!
 //! ```ignore
 //! use sneeze::*;
@@ -56,7 +57,8 @@ use nanoserde::DeJson;
 
 pub use abi::{SNEEZE_OBJECTIX_CLASS, SNEEZE_OBJECTIX_COMPOSE, SNEEZE_OBJECTIX_INDEX, SNEEZE_OBJECTIX_ERROR, SNEEZE_OBJECTIX_IDENTITY};
 pub use abi::{eSNEEZE_ABI_SILO_SCOPE, eSNEEZE_ABI_TIMER_UNIT, eSNEEZE_ABI_CHRONO_ZONE};
-pub use objects::{CHRONO, CONSOLE, DATA, FABRIC, HOST, NODE, PERFORMANCE, SCENE, SERVICES, STORAGE, TIMER};
+pub use abi::{eSNEEZE_ABI_REQUEST_VERB, eSNEEZE_ABI_REQUEST_STATE, eSNEEZE_ABI_SOCKET_STATE};
+pub use objects::{CHRONO, CONSOLE, DATA, FABRIC, HOST, NETWORK, NODE, PERFORMANCE, REQUEST, SCENE, SERVICES, SOCKET, STORAGE, TIMER};
 pub use mapobject::SNEEZE_ABI_MAPOBJECT;
 pub use mapservice::MAP_SERVICE;
 pub use moment::MOMENT;
@@ -166,6 +168,24 @@ pub trait INSTANCE
    /// A timer armed via `HOST::Timer` fired. `twTimerIx` is the id returned by
    /// Set/Interval; `qwParam` is the cookie passed when arming. Default: ignore.
    fn Timer (pHost: &HOST, twTimerIx: u64, qwParam: u64) { let _ = (pHost, twTimerIx, qwParam); }
+
+   /// A request sent via `REQUEST::Send` finished. `bSuccess` distinguishes a
+   /// completed exchange from a transport failure - it is NOT the HTTP status, so a
+   /// 404 arrives with `bSuccess` true and `Status` 404. Read the response through
+   /// `pRequest`, then `Close` it (the guest owns the handle). Default: ignore,
+   /// which leaks the handle, so override it if you send requests.
+   fn Request (pHost: &HOST, pRequest: REQUEST, bSuccess: bool) { let _ = (pHost, pRequest, bSuccess); }
+
+   /// A socket opened via `NETWORK::Socket_Open` changed state. These are the
+   /// browser's four WebSocket events: onopen, onmessage, onerror, onclose.
+   /// `Socket_Received` says a message is waiting and how big it is; take it with
+   /// `SOCKET::Recv`, or it stays queued. `Socket_Failed` is always followed by
+   /// `Socket_Closed` with code 1006, because a failure means no closing
+   /// handshake happened. Defaults: ignore.
+   fn Socket_Opened (pHost: &HOST, pSocket: SOCKET) { let _ = (pHost, pSocket); }
+   fn Socket_Received (pHost: &HOST, pSocket: SOCKET, bBinary: bool, nSize: i64) { let _ = (pHost, pSocket, bBinary, nSize); }
+   fn Socket_Failed (pHost: &HOST, pSocket: SOCKET) { let _ = (pHost, pSocket); }
+   fn Socket_Closed (pHost: &HOST, pSocket: SOCKET, wCode: i32, bClean: bool) { let _ = (pHost, pSocket, wCode, bClean); }
 }
 
 // ---------------------------------------------------------------------------
@@ -296,7 +316,12 @@ pub fn Host_Release (twFabricIx: u64)
 #[doc(hidden)]
 pub enum EVENT
 {
-   Timer { pHost: &'static HOST, twTimerIx: u64, qwParam: u64 },
+   Timer           { pHost: &'static HOST, twTimerIx: u64, qwParam: u64 },
+   Request         { pHost: &'static HOST, pRequest: REQUEST, bSuccess: bool },
+   Socket_Opened   { pHost: &'static HOST, pSocket: SOCKET },
+   Socket_Received { pHost: &'static HOST, pSocket: SOCKET, bBinary: bool, nSize: i64 },
+   Socket_Failed   { pHost: &'static HOST, pSocket: SOCKET },
+   Socket_Closed   { pHost: &'static HOST, pSocket: SOCKET, wCode: i32, bClean: bool },
    Unknown,
 }
 
@@ -323,6 +348,38 @@ pub fn Event_Parse (nOffset: i32, nSize: i32) -> EVENT
          if let Some (pHost) = Host_Find (twFabricIx)
          {
             eEvent = EVENT::Timer { pHost, twTimerIx, qwParam };
+         }
+      }
+      else if wType == abi::kSNEEZE_ABI_TYPE_NETWORK  &&  wMethod == abi::kSNEEZE_ABI_METHOD_NETWORK_REQUEST_COMPLETED  &&  aPayload.len () >= 32
+      {
+         let twFabricIx  = u64::from_le_bytes (aPayload[ 0.. 8].try_into ().unwrap ());
+         let twRequestIx = u64::from_le_bytes (aPayload[ 8..16].try_into ().unwrap ());
+         let bSuccess    = u64::from_le_bytes (aPayload[16..24].try_into ().unwrap ());
+
+         if let Some (pHost) = Host_Find (twFabricIx)
+         {
+            eEvent = EVENT::Request { pHost, pRequest: REQUEST::New (twRequestIx), bSuccess: bSuccess != 0 };
+         }
+      }
+      else if wType == abi::kSNEEZE_ABI_TYPE_NETWORK  &&  aPayload.len () >= 32
+      {
+         let twFabricIx = u64::from_le_bytes (aPayload[ 0.. 8].try_into ().unwrap ());
+         let twSocketIx = u64::from_le_bytes (aPayload[ 8..16].try_into ().unwrap ());
+         let qwA        = u64::from_le_bytes (aPayload[16..24].try_into ().unwrap ());
+         let qwB        = u64::from_le_bytes (aPayload[24..32].try_into ().unwrap ());
+
+         if let Some (pHost) = Host_Find (twFabricIx)
+         {
+            let pSocket = SOCKET::New (twSocketIx);
+
+            eEvent = match wMethod
+            {
+               abi::kSNEEZE_ABI_METHOD_NETWORK_SOCKET_OPENED   => EVENT::Socket_Opened   { pHost, pSocket },
+               abi::kSNEEZE_ABI_METHOD_NETWORK_SOCKET_RECEIVED => EVENT::Socket_Received { pHost, pSocket, bBinary: qwA != 0, nSize: qwB as i64 },
+               abi::kSNEEZE_ABI_METHOD_NETWORK_SOCKET_FAILED   => EVENT::Socket_Failed   { pHost, pSocket },
+               abi::kSNEEZE_ABI_METHOD_NETWORK_SOCKET_CLOSED   => EVENT::Socket_Closed   { pHost, pSocket, wCode: qwA as i32, bClean: qwB != 0 },
+               _                                              => EVENT::Unknown,
+            };
          }
       }
    }
@@ -389,6 +446,21 @@ macro_rules! instance
          {
             $crate::EVENT::Timer { pHost, twTimerIx, qwParam } =>
                <$instance as $crate::INSTANCE>::Timer (pHost, twTimerIx, qwParam),
+
+            $crate::EVENT::Request { pHost, pRequest, bSuccess } =>
+               <$instance as $crate::INSTANCE>::Request (pHost, pRequest, bSuccess),
+
+            $crate::EVENT::Socket_Opened { pHost, pSocket } =>
+               <$instance as $crate::INSTANCE>::Socket_Opened (pHost, pSocket),
+
+            $crate::EVENT::Socket_Received { pHost, pSocket, bBinary, nSize } =>
+               <$instance as $crate::INSTANCE>::Socket_Received (pHost, pSocket, bBinary, nSize),
+
+            $crate::EVENT::Socket_Failed { pHost, pSocket } =>
+               <$instance as $crate::INSTANCE>::Socket_Failed (pHost, pSocket),
+
+            $crate::EVENT::Socket_Closed { pHost, pSocket, wCode, bClean } =>
+               <$instance as $crate::INSTANCE>::Socket_Closed (pHost, pSocket, wCode, bClean),
 
             $crate::EVENT::Unknown => {},
          }
