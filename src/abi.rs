@@ -54,10 +54,10 @@ pub const kSNEEZE_ABI_METHOD_STORAGE_GET                    : u16 = 2;
 pub const kSNEEZE_ABI_METHOD_STORAGE_SET                    : u16 = 3;
 pub const kSNEEZE_ABI_METHOD_STORAGE_REMOVE                 : u16 = 4;
 
-// NETWORK methods. Two contiguous blocks: REQUEST (an XHR-shaped HTTP request)
-// holds 1-29, SOCKET (a browser-shaped WebSocket) holds 30-59. Within each block
-// the numbers past the calls are host -> guest Notify events, not calls: REQUEST
-// COMPLETED and PROGRESS, and SOCKET OPENED, RECEIVED, FAILED and CLOSED.
+// NETWORK methods. Three contiguous blocks: REQUEST (an XHR-shaped HTTP request)
+// holds 1-29, SOCKET (a browser-shaped WebSocket) holds 30-59, IO (a Socket.IO
+// connection) holds 60-89. Within each block the numbers past the calls are
+// host -> guest Notify events, not calls.
 pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_OPEN           : u16 =  1;
 pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_HEADER_SET     : u16 =  2;
 pub const kSNEEZE_ABI_METHOD_NETWORK_REQUEST_TIMEOUT_SET    : u16 =  3;
@@ -92,6 +92,25 @@ pub const kSNEEZE_ABI_METHOD_NETWORK_SOCKET_RECEIVED        : u16 = 41;
 pub const kSNEEZE_ABI_METHOD_NETWORK_SOCKET_FAILED          : u16 = 42;
 pub const kSNEEZE_ABI_METHOD_NETWORK_SOCKET_CLOSED          : u16 = 43;
 pub const kSNEEZE_ABI_METHOD_NETWORK_SOCKET_FREE            : u16 = 44;
+pub const kSNEEZE_ABI_METHOD_NETWORK_IO_OPEN                : u16 = 60;
+pub const kSNEEZE_ABI_METHOD_NETWORK_IO_EMIT_TEXT           : u16 = 61;
+pub const kSNEEZE_ABI_METHOD_NETWORK_IO_EMIT_BINARY         : u16 = 62;
+pub const kSNEEZE_ABI_METHOD_NETWORK_IO_EMIT_TEXT_EX        : u16 = 63;
+pub const kSNEEZE_ABI_METHOD_NETWORK_IO_EMIT_BINARY_EX      : u16 = 64;
+pub const kSNEEZE_ABI_METHOD_NETWORK_IO_CLOSE               : u16 = 65;
+pub const kSNEEZE_ABI_METHOD_NETWORK_IO_STATE               : u16 = 66;
+pub const kSNEEZE_ABI_METHOD_NETWORK_IO_BUFFERED            : u16 = 67;
+pub const kSNEEZE_ABI_METHOD_NETWORK_IO_URL                 : u16 = 68;
+pub const kSNEEZE_ABI_METHOD_NETWORK_IO_RECV_EVENT          : u16 = 69;
+pub const kSNEEZE_ABI_METHOD_NETWORK_IO_RECV                : u16 = 70;
+pub const kSNEEZE_ABI_METHOD_NETWORK_IO_RECV_ACK            : u16 = 71;
+pub const kSNEEZE_ABI_METHOD_NETWORK_IO_ERROR               : u16 = 72;
+pub const kSNEEZE_ABI_METHOD_NETWORK_IO_OPENED              : u16 = 73;
+pub const kSNEEZE_ABI_METHOD_NETWORK_IO_RECEIVED            : u16 = 74;
+pub const kSNEEZE_ABI_METHOD_NETWORK_IO_FAILED              : u16 = 75;
+pub const kSNEEZE_ABI_METHOD_NETWORK_IO_CLOSED              : u16 = 76;
+pub const kSNEEZE_ABI_METHOD_NETWORK_IO_ACKED               : u16 = 77;
+pub const kSNEEZE_ABI_METHOD_NETWORK_IO_FREE                : u16 = 78;
 
 // VIEWPORT methods (not implemented yet host-side).
 pub const kSNEEZE_ABI_METHOD_VIEWPORT_POSITION_GET          : u16 = 1;
@@ -252,6 +271,31 @@ impl eSNEEZE_ABI_SOCKET_STATE
          1 => Self::kSNEEZE_ABI_SOCKET_STATE_OPEN,
          2 => Self::kSNEEZE_ABI_SOCKET_STATE_CLOSING,
          _ => Self::kSNEEZE_ABI_SOCKET_STATE_CLOSED,
+      }
+   }
+}
+
+// IO_STATE uses the same four values as SOCKET_STATE.
+#[repr(i32)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum eSNEEZE_ABI_IO_STATE
+{
+   kSNEEZE_ABI_IO_STATE_CONNECTING                                = 0,
+   kSNEEZE_ABI_IO_STATE_OPEN                                      = 1,
+   kSNEEZE_ABI_IO_STATE_CLOSING                                   = 2,
+   kSNEEZE_ABI_IO_STATE_CLOSED                                    = 3,
+}
+
+impl eSNEEZE_ABI_IO_STATE
+{
+   pub fn From_Value (nValue: i64) -> Self
+   {
+      match nValue
+      {
+         0 => Self::kSNEEZE_ABI_IO_STATE_CONNECTING,
+         1 => Self::kSNEEZE_ABI_IO_STATE_OPEN,
+         2 => Self::kSNEEZE_ABI_IO_STATE_CLOSING,
+         _ => Self::kSNEEZE_ABI_IO_STATE_CLOSED,
       }
    }
 }

@@ -57,8 +57,8 @@ use nanoserde::DeJson;
 
 pub use abi::{SNEEZE_OBJECTIX_CLASS, SNEEZE_OBJECTIX_COMPOSE, SNEEZE_OBJECTIX_INDEX, SNEEZE_OBJECTIX_ERROR, SNEEZE_OBJECTIX_IDENTITY};
 pub use abi::{eSNEEZE_ABI_SILO_SCOPE, eSNEEZE_ABI_TIMER_UNIT, eSNEEZE_ABI_CHRONO_ZONE};
-pub use abi::{eSNEEZE_ABI_REQUEST_VERB, eSNEEZE_ABI_REQUEST_STATE, eSNEEZE_ABI_SOCKET_STATE};
-pub use objects::{CHRONO, CONSOLE, DATA, FABRIC, HOST, NETWORK, NODE, PERFORMANCE, REQUEST, SCENE, SERVICES, SOCKET, STORAGE, TIMER};
+pub use abi::{eSNEEZE_ABI_REQUEST_VERB, eSNEEZE_ABI_REQUEST_STATE, eSNEEZE_ABI_SOCKET_STATE, eSNEEZE_ABI_IO_STATE};
+pub use objects::{CHRONO, CONSOLE, DATA, FABRIC, HOST, IO, NETWORK, NODE, PERFORMANCE, REQUEST, SCENE, SERVICES, SOCKET, STORAGE, TIMER};
 pub use mapobject::SNEEZE_ABI_MAPOBJECT;
 pub use mapservice::MAP_SERVICE;
 pub use moment::MOMENT;
@@ -186,6 +186,16 @@ pub trait INSTANCE
    fn Socket_Received (pHost: &HOST, pSocket: SOCKET, bBinary: bool, nSize: i64) { let _ = (pHost, pSocket, bBinary, nSize); }
    fn Socket_Failed (pHost: &HOST, pSocket: SOCKET) { let _ = (pHost, pSocket); }
    fn Socket_Closed (pHost: &HOST, pSocket: SOCKET, wCode: i32, bClean: bool) { let _ = (pHost, pSocket, wCode, bClean); }
+
+   /// A Socket.IO connection opened via `NETWORK::Io_Open` changed state.
+   /// `Io_Received` is `onAny` (take with `IO::Recv_Event` then `Recv`).
+   /// `Io_Acked` is the reply to one `Emit_*_Ex`; `qwParam` is the cookie from
+   /// that emit, and `Recv_Ack` takes the payload. Defaults: ignore.
+   fn Io_Opened (pHost: &HOST, pIo: IO) { let _ = (pHost, pIo); }
+   fn Io_Received (pHost: &HOST, pIo: IO, bBinary: bool, nSize: i64) { let _ = (pHost, pIo, bBinary, nSize); }
+   fn Io_Failed (pHost: &HOST, pIo: IO) { let _ = (pHost, pIo); }
+   fn Io_Closed (pHost: &HOST, pIo: IO, wCode: i32, bClean: bool) { let _ = (pHost, pIo, wCode, bClean); }
+   fn Io_Acked (pHost: &HOST, pIo: IO, qwParam: u64, nSize: i64) { let _ = (pHost, pIo, qwParam, nSize); }
 }
 
 // ---------------------------------------------------------------------------
@@ -322,6 +332,11 @@ pub enum EVENT
    Socket_Received { pHost: &'static HOST, pSocket: SOCKET, bBinary: bool, nSize: i64 },
    Socket_Failed   { pHost: &'static HOST, pSocket: SOCKET },
    Socket_Closed   { pHost: &'static HOST, pSocket: SOCKET, wCode: i32, bClean: bool },
+   Io_Opened       { pHost: &'static HOST, pIo: IO },
+   Io_Received     { pHost: &'static HOST, pIo: IO, bBinary: bool, nSize: i64 },
+   Io_Failed       { pHost: &'static HOST, pIo: IO },
+   Io_Closed       { pHost: &'static HOST, pIo: IO, wCode: i32, bClean: bool },
+   Io_Acked        { pHost: &'static HOST, pIo: IO, qwParam: u64, nSize: i64 },
    Unknown,
 }
 
@@ -371,6 +386,7 @@ pub fn Event_Parse (nOffset: i32, nSize: i32) -> EVENT
          if let Some (pHost) = Host_Find (twFabricIx)
          {
             let pSocket = SOCKET::New (twSocketIx);
+            let pIo     = IO::New (twSocketIx);
 
             eEvent = match wMethod
             {
@@ -378,6 +394,11 @@ pub fn Event_Parse (nOffset: i32, nSize: i32) -> EVENT
                abi::kSNEEZE_ABI_METHOD_NETWORK_SOCKET_RECEIVED => EVENT::Socket_Received { pHost, pSocket, bBinary: qwA != 0, nSize: qwB as i64 },
                abi::kSNEEZE_ABI_METHOD_NETWORK_SOCKET_FAILED   => EVENT::Socket_Failed   { pHost, pSocket },
                abi::kSNEEZE_ABI_METHOD_NETWORK_SOCKET_CLOSED   => EVENT::Socket_Closed   { pHost, pSocket, wCode: qwA as i32, bClean: qwB != 0 },
+               abi::kSNEEZE_ABI_METHOD_NETWORK_IO_OPENED       => EVENT::Io_Opened       { pHost, pIo },
+               abi::kSNEEZE_ABI_METHOD_NETWORK_IO_RECEIVED     => EVENT::Io_Received     { pHost, pIo, bBinary: qwA != 0, nSize: qwB as i64 },
+               abi::kSNEEZE_ABI_METHOD_NETWORK_IO_FAILED       => EVENT::Io_Failed       { pHost, pIo },
+               abi::kSNEEZE_ABI_METHOD_NETWORK_IO_CLOSED       => EVENT::Io_Closed       { pHost, pIo, wCode: qwA as i32, bClean: qwB != 0 },
+               abi::kSNEEZE_ABI_METHOD_NETWORK_IO_ACKED        => EVENT::Io_Acked        { pHost, pIo, qwParam: qwA, nSize: qwB as i64 },
                _                                              => EVENT::Unknown,
             };
          }
@@ -461,6 +482,21 @@ macro_rules! instance
 
             $crate::EVENT::Socket_Closed { pHost, pSocket, wCode, bClean } =>
                <$instance as $crate::INSTANCE>::Socket_Closed (pHost, pSocket, wCode, bClean),
+
+            $crate::EVENT::Io_Opened { pHost, pIo } =>
+               <$instance as $crate::INSTANCE>::Io_Opened (pHost, pIo),
+
+            $crate::EVENT::Io_Received { pHost, pIo, bBinary, nSize } =>
+               <$instance as $crate::INSTANCE>::Io_Received (pHost, pIo, bBinary, nSize),
+
+            $crate::EVENT::Io_Failed { pHost, pIo } =>
+               <$instance as $crate::INSTANCE>::Io_Failed (pHost, pIo),
+
+            $crate::EVENT::Io_Closed { pHost, pIo, wCode, bClean } =>
+               <$instance as $crate::INSTANCE>::Io_Closed (pHost, pIo, wCode, bClean),
+
+            $crate::EVENT::Io_Acked { pHost, pIo, qwParam, nSize } =>
+               <$instance as $crate::INSTANCE>::Io_Acked (pHost, pIo, qwParam, nSize),
 
             $crate::EVENT::Unknown => {},
          }

@@ -727,15 +727,17 @@ impl TIMER
 }
 
 // ---------------------------------------------------------------------------
-// NETWORK - the fabric's window onto the network: HTTP through REQUEST, and
-// WebSockets through SOCKET. Reached through `HOST::Network`.
+// NETWORK - the fabric's window onto the network: HTTP through REQUEST,
+// WebSockets through SOCKET, and Socket.IO through IO. Reached through
+// `HOST::Network`.
 //
 // A request URL is resolved against the fabric's own URL, exactly like a node's
 // resource or a module reference, so "api/state" means the fabric's folder and
 // "/api/state" means the host root.
 //
 // A socket URL is not resolved: it must be an absolute ws:// or wss:// URL, the
-// same rule the browser's WebSocket constructor applies.
+// same rule the browser's WebSocket constructor applies. An IO URL is likewise
+// absolute (http:// or https://) and is not resolved against the fabric.
 // ---------------------------------------------------------------------------
 
 #[derive(Copy, Clone)]
@@ -787,6 +789,19 @@ impl NETWORK
       pPacket.Write_Text  (sProtocol);
 
       SOCKET { m_twSocketIx: pPacket.Send () as u64 }
+   }
+
+   /// Opens one Socket.IO connection. The returned IO is invalid (`IsValid`
+   /// false) if the host refused, which happens when the URL is not an absolute
+   /// http:// or https:// URL or the fabric is no longer live.
+   pub fn Io_Open (&self, sUrl: &str) -> IO
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NETWORK, kSNEEZE_ABI_METHOD_NETWORK_IO_OPEN);
+
+      pPacket.Write_Qword (self.m_twFabricIx);
+      pPacket.Write_Text  (sUrl);
+
+      IO { m_twIoIx: pPacket.Send () as u64 }
    }
 }
 
@@ -1177,6 +1192,193 @@ impl SOCKET
    }
 
    // The probe-then-reread string read, as REQUEST does it.
+   fn Value_Get (&self, wMethod: u16) -> String
+   {
+      let mut sResult = String::new ();
+      let mut aByte   = vec![0u8; 256];
+      let     nProbe  = self.Value_Into (wMethod, aByte.as_ptr (), aByte.len ());
+
+      if nProbe > 0
+      {
+         let mut nSizeNeeded = nProbe as usize;
+         let mut bValid      = true;
+
+         if nSizeNeeded > aByte.len ()
+         {
+            aByte = vec![0u8; nSizeNeeded];
+
+            let nAgain = self.Value_Into (wMethod, aByte.as_ptr (), aByte.len ());
+
+            if nAgain > 0
+            {
+               nSizeNeeded = nAgain as usize;
+            }
+            else
+            {
+               bValid = false;
+            }
+         }
+
+         if bValid
+         {
+            let nCount = if nSizeNeeded < aByte.len () { nSizeNeeded } else { aByte.len () };
+
+            aByte.truncate (nCount);
+            sResult = String::from_utf8 (aByte).unwrap_or_default ();
+         }
+      }
+
+      sResult
+   }
+}
+
+// ---------------------------------------------------------------------------
+// IO - one Socket.IO connection. The host runs official socket.io-client; the
+// guest sees a handle, two queues (events and acks), and five INSTANCE hooks:
+// Io_Opened, Io_Received, Io_Failed, Io_Closed, Io_Acked. Like SOCKET it is a
+// thin copyable handle.
+//
+// Emit is fire-and-forget. Emit_Ex requests an ack and echoes qwParam on
+// Io_Acked (0 is a valid cookie). Every Io_Received owes Recv_Event then Recv;
+// every Io_Acked owes Recv_Ack. Close disconnects; Free retires the handle.
+// ---------------------------------------------------------------------------
+
+#[derive(Copy, Clone)]
+pub struct IO
+{
+   m_twIoIx: u64,
+}
+
+impl IO
+{
+   pub fn New (twIoIx: u64) -> Self { IO { m_twIoIx: twIoIx } }
+
+   pub fn Index (&self) -> u64 { self.m_twIoIx }
+
+   pub fn IsValid (&self) -> bool { self.m_twIoIx != 0 }
+
+   pub fn Emit_Text (&self, sEvent: &str, sText: &str) -> bool
+   {
+      self.Issue (kSNEEZE_ABI_METHOD_NETWORK_IO_EMIT_TEXT, sEvent, sText.as_ptr (), sText.len (), None)
+   }
+
+   pub fn Emit_Bytes (&self, sEvent: &str, aByte: &[u8]) -> bool
+   {
+      self.Issue (kSNEEZE_ABI_METHOD_NETWORK_IO_EMIT_BINARY, sEvent, aByte.as_ptr (), aByte.len (), None)
+   }
+
+   pub fn Emit_Text_Ex (&self, sEvent: &str, sText: &str, qwParam: u64) -> bool
+   {
+      self.Issue (kSNEEZE_ABI_METHOD_NETWORK_IO_EMIT_TEXT_EX, sEvent, sText.as_ptr (), sText.len (), Some (qwParam))
+   }
+
+   pub fn Emit_Bytes_Ex (&self, sEvent: &str, aByte: &[u8], qwParam: u64) -> bool
+   {
+      self.Issue (kSNEEZE_ABI_METHOD_NETWORK_IO_EMIT_BINARY_EX, sEvent, aByte.as_ptr (), aByte.len (), Some (qwParam))
+   }
+
+   pub fn Close (&self) -> bool
+   {
+      self.Scalar (kSNEEZE_ABI_METHOD_NETWORK_IO_CLOSE) != 0
+   }
+
+   pub fn Free (&self) -> bool
+   {
+      self.Scalar (kSNEEZE_ABI_METHOD_NETWORK_IO_FREE) != 0
+   }
+
+   pub fn State (&self) -> eSNEEZE_ABI_IO_STATE
+   {
+      eSNEEZE_ABI_IO_STATE::From_Value (self.Scalar (kSNEEZE_ABI_METHOD_NETWORK_IO_STATE))
+   }
+
+   pub fn Buffered (&self) -> i64 { self.Scalar (kSNEEZE_ABI_METHOD_NETWORK_IO_BUFFERED) }
+
+   pub fn Url (&self) -> String { self.Value_Get (kSNEEZE_ABI_METHOD_NETWORK_IO_URL) }
+
+   pub fn Error (&self) -> String { self.Value_Get (kSNEEZE_ABI_METHOD_NETWORK_IO_ERROR) }
+
+   pub fn Recv_Event (&self) -> String { self.Value_Get (kSNEEZE_ABI_METHOD_NETWORK_IO_RECV_EVENT) }
+
+   pub fn Recv_Text (&self) -> String
+   {
+      String::from_utf8 (self.Recv ()).unwrap_or_default ()
+   }
+
+   pub fn Recv_Ack_Text (&self) -> String
+   {
+      String::from_utf8 (self.Recv_Ack ()).unwrap_or_default ()
+   }
+
+   pub fn Recv (&self) -> Vec<u8>
+   {
+      self.Pop (kSNEEZE_ABI_METHOD_NETWORK_IO_RECV)
+   }
+
+   pub fn Recv_Ack (&self) -> Vec<u8>
+   {
+      self.Pop (kSNEEZE_ABI_METHOD_NETWORK_IO_RECV_ACK)
+   }
+
+   fn Scalar (&self, wMethod: u16) -> i64
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NETWORK, wMethod);
+
+      pPacket.Write_Qword (self.m_twIoIx);
+
+      pPacket.Send ()
+   }
+
+   fn Issue (&self, wMethod: u16, sEvent: &str, pByte: *const u8, nLength: usize, oParam: Option<u64>) -> bool
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NETWORK, wMethod);
+
+      pPacket.Write_Qword (self.m_twIoIx);
+      pPacket.Write_Text  (sEvent);
+      pPacket.Write_Bytes (pByte, nLength);
+
+      if let Some (qwParam) = oParam
+      {
+         pPacket.Write_Qword (qwParam);
+      }
+
+      pPacket.Send () != 0
+   }
+
+   fn Value_Into (&self, wMethod: u16, pByte: *const u8, nLength: usize) -> i64
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NETWORK, wMethod);
+
+      pPacket.Write_Qword (self.m_twIoIx);
+      pPacket.Write_Bytes (pByte, nLength);
+
+      pPacket.Send ()
+   }
+
+   fn Pop (&self, wMethod: u16) -> Vec<u8>
+   {
+      let mut aResult: Vec<u8> = Vec::new ();
+      let     nNeeded          = self.Value_Into (wMethod, core::ptr::null (), 0);
+
+      if nNeeded > 0
+      {
+         let mut aByte = vec![0u8; nNeeded as usize];
+         let     nRead = self.Value_Into (wMethod, aByte.as_ptr (), aByte.len ());
+
+         if nRead > 0
+         {
+            if (nRead as usize) < aByte.len ()
+            {
+               aByte.truncate (nRead as usize);
+            }
+
+            aResult = aByte;
+         }
+      }
+
+      aResult
+   }
+
    fn Value_Get (&self, wMethod: u16) -> String
    {
       let mut sResult = String::new ();
