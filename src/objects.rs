@@ -607,6 +607,168 @@ impl NODE
       
       pPacket.Send ();
    }
+
+   fn Doubles (&self, wMethod: u16, nCount: usize) -> Option<Vec<f64>>
+   {
+      let mut pValue = None;
+      let nSize = nCount * 8;
+      let mut aByte = vec![0u8; nSize];
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NODE, wMethod);
+
+      pPacket.Write_Qword (self.m_qwComposed);
+      pPacket.Write_Bytes (aByte.as_ptr (), aByte.len ());
+
+      if pPacket.Send () == nSize as i64
+      {
+         let mut aValue = Vec::with_capacity (nCount);
+
+         for i in 0 .. nCount
+         {
+            let mut aWord = [0u8; 8];
+
+            aWord.copy_from_slice (&aByte[i * 8 .. i * 8 + 8]);
+            aValue.push (f64::from_le_bytes (aWord));
+         }
+
+         pValue = Some (aValue);
+      }
+
+      pValue
+   }
+
+   fn Text (&self, wMethod: u16) -> String
+   {
+      let mut sResult = String::new ();
+      let mut aByte = vec![0u8; 256];
+      let mut nProbe = self.Text_Into (wMethod, &mut aByte);
+
+      if nProbe > 0
+      {
+         let mut nSizeNeeded = nProbe as usize;
+         let mut bValid = true;
+
+         if nSizeNeeded > aByte.len ()
+         {
+            aByte = vec![0u8; nSizeNeeded];
+            nProbe = self.Text_Into (wMethod, &mut aByte);
+
+            if nProbe > 0
+            {
+               nSizeNeeded = nProbe as usize;
+            }
+            else
+            {
+               bValid = false;
+            }
+         }
+
+         if bValid
+         {
+            let nCount = if nSizeNeeded < aByte.len () { nSizeNeeded } else { aByte.len () };
+
+            aByte.truncate (nCount);
+            if let Ok (sText) = String::from_utf8 (aByte)
+            {
+               sResult = sText;
+            }
+         }
+      }
+
+      sResult
+   }
+
+   fn Text_Into (&self, wMethod: u16, aByte: &mut [u8]) -> i64
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NODE, wMethod);
+
+      pPacket.Write_Qword (self.m_qwComposed);
+      pPacket.Write_Bytes (aByte.as_ptr (), aByte.len ());
+
+      pPacket.Send ()
+   }
+
+   /// Local position. None when the node is gone.
+   pub fn Position (&self) -> Option<(f64, f64, f64)>
+   {
+      let mut pResult = None;
+
+      if let Some (aValue) = self.Doubles (kSNEEZE_ABI_METHOD_NODE_POSITION_GET, 3)
+      {
+         pResult = Some ((aValue[0], aValue[1], aValue[2]));
+      }
+
+      pResult
+   }
+
+   /// Local rotation quaternion (x, y, z, w). None when the node is gone.
+   pub fn Rotation (&self) -> Option<(f64, f64, f64, f64)>
+   {
+      let mut pResult = None;
+
+      if let Some (aValue) = self.Doubles (kSNEEZE_ABI_METHOD_NODE_ROTATION_GET, 4)
+      {
+         pResult = Some ((aValue[0], aValue[1], aValue[2], aValue[3]));
+      }
+
+      pResult
+   }
+
+   /// Uniform scale, which is the X axis. None when the node is gone.
+   pub fn Scale (&self) -> Option<f64>
+   {
+      let mut pResult = None;
+
+      if let Some (aValue) = self.Doubles (kSNEEZE_ABI_METHOD_NODE_SCALE_GET, 1)
+      {
+         pResult = Some (aValue[0]);
+      }
+
+      pResult
+   }
+
+   /// Per-axis scale. None when the node is gone.
+   pub fn Scale_Axes (&self) -> Option<(f64, f64, f64)>
+   {
+      let mut pResult = None;
+
+      if let Some (aValue) = self.Doubles (kSNEEZE_ABI_METHOD_NODE_SCALE_AXES_GET, 3)
+      {
+         pResult = Some ((aValue[0], aValue[1], aValue[2]));
+      }
+
+      pResult
+   }
+
+   /// Bounding extents. None when the node is gone.
+   pub fn Bound (&self) -> Option<(f64, f64, f64)>
+   {
+      let mut pResult = None;
+
+      if let Some (aValue) = self.Doubles (kSNEEZE_ABI_METHOD_NODE_BOUND_GET, 3)
+      {
+         pResult = Some ((aValue[0], aValue[1], aValue[2]));
+      }
+
+      pResult
+   }
+
+   /// Stored name. Empty when unset or the node is gone.
+   pub fn Name (&self) -> String
+   {
+      self.Text (kSNEEZE_ABI_METHOD_NODE_NAME_GET)
+   }
+
+   /// Stored resource reference. Empty when unset or the node is gone.
+   pub fn Resource (&self) -> String
+   {
+      self.Text (kSNEEZE_ABI_METHOD_NODE_RESOURCE_GET)
+   }
+
+   /// Stored panel source. Empty when unset or the node is gone.
+   pub fn Panel (&self) -> String
+   {
+      self.Text (kSNEEZE_ABI_METHOD_NODE_PANEL_GET)
+   }
 }
 
 // ---------------------------------------------------------------------------

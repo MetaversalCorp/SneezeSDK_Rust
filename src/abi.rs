@@ -146,6 +146,15 @@ pub const kSNEEZE_ABI_METHOD_NODE_BOUND                     : u16 = 5;
 pub const kSNEEZE_ABI_METHOD_NODE_NAME                      : u16 = 6;
 pub const kSNEEZE_ABI_METHOD_NODE_RESOURCE                  : u16 = 7;
 pub const kSNEEZE_ABI_METHOD_NODE_PANEL                     : u16 = 8;
+pub const kSNEEZE_ABI_METHOD_NODE_MODEL                     : u16 = 9;   // host loads glTF/GLB bytes; no read
+pub const kSNEEZE_ABI_METHOD_NODE_POSITION_GET              : u16 = 10;
+pub const kSNEEZE_ABI_METHOD_NODE_ROTATION_GET              : u16 = 11;
+pub const kSNEEZE_ABI_METHOD_NODE_SCALE_GET                 : u16 = 12;
+pub const kSNEEZE_ABI_METHOD_NODE_SCALE_AXES_GET            : u16 = 13;
+pub const kSNEEZE_ABI_METHOD_NODE_BOUND_GET                 : u16 = 14;
+pub const kSNEEZE_ABI_METHOD_NODE_NAME_GET                  : u16 = 15;
+pub const kSNEEZE_ABI_METHOD_NODE_RESOURCE_GET              : u16 = 16;
+pub const kSNEEZE_ABI_METHOD_NODE_PANEL_GET                 : u16 = 17;
 
 // DATA methods (read-only; the immutable analog of STORAGE).
 pub const kSNEEZE_ABI_METHOD_DATA_HAS                       : u16 = 1;
