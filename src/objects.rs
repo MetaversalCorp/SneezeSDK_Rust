@@ -53,6 +53,7 @@ impl HOST
    pub fn Performance (&self) -> PERFORMANCE { PERFORMANCE { m_twFabricIx: self.m_twFabricIx } }
    pub fn Timer       (&self) -> TIMER       { TIMER       { m_twFabricIx: self.m_twFabricIx } }
    pub fn Network     (&self) -> NETWORK     { NETWORK     { m_twFabricIx: self.m_twFabricIx } }
+   pub fn Viewport    (&self) -> VIEWPORT    { VIEWPORT    { m_twFabricIx: self.m_twFabricIx } }
 
    // Typed read-only views over the private Open snapshot. LOCATION is built from
    // the resource reference; the rest borrow their section directly.
@@ -62,6 +63,98 @@ impl HOST
    pub fn Agent     (&self) -> &'static AGENT     { &Snapshot ().Agent }
    pub fn Container (&self) -> &'static CONTAINER { &Snapshot ().Container }
    pub fn Modules   (&self) -> &'static [MODULE]  { &Snapshot ().Modules }
+}
+
+// ---------------------------------------------------------------------------
+// VIEWPORT - the user's camera. Position is world metres. Rotation is the
+// quaternion that turns identity +X onto the look direction. A read is None
+// when the host rejects the call. A write keeps the half it does not set.
+// ---------------------------------------------------------------------------
+
+#[derive(Copy, Clone)]
+pub struct VIEWPORT
+{
+   m_twFabricIx: u64,
+}
+
+impl VIEWPORT
+{
+   fn Doubles (&self, wMethod: u16, nCount: usize) -> Option<Vec<f64>>
+   {
+      let mut pValue = None;
+      let nSize = nCount * 8;
+      let aByte = vec![0u8; nSize];
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_VIEWPORT, wMethod);
+
+      pPacket.Write_Qword (self.m_twFabricIx);
+      pPacket.Write_Bytes (aByte.as_ptr (), aByte.len ());
+
+      if pPacket.Send () == nSize as i64
+      {
+         let mut aValue = Vec::with_capacity (nCount);
+
+         for i in 0 .. nCount
+         {
+            let mut aWord = [0u8; 8];
+
+            aWord.copy_from_slice (&aByte[i * 8 .. i * 8 + 8]);
+            aValue.push (f64::from_le_bytes (aWord));
+         }
+
+         pValue = Some (aValue);
+      }
+
+      pValue
+   }
+
+   pub fn Position (&self) -> Option<(f64, f64, f64)>
+   {
+      let mut pResult = None;
+
+      if let Some (aValue) = self.Doubles (kSNEEZE_ABI_METHOD_VIEWPORT_POSITION_GET, 3)
+      {
+         pResult = Some ((aValue[0], aValue[1], aValue[2]));
+      }
+
+      pResult
+   }
+
+   pub fn Position_Set (&self, dX: f64, dY: f64, dZ: f64) -> bool
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_VIEWPORT, kSNEEZE_ABI_METHOD_VIEWPORT_POSITION_SET);
+
+      pPacket.Write_Qword  (self.m_twFabricIx);
+      pPacket.Write_Double (dX);
+      pPacket.Write_Double (dY);
+      pPacket.Write_Double (dZ);
+
+      pPacket.Send () != 0
+   }
+
+   pub fn Rotation (&self) -> Option<(f64, f64, f64, f64)>
+   {
+      let mut pResult = None;
+
+      if let Some (aValue) = self.Doubles (kSNEEZE_ABI_METHOD_VIEWPORT_ROTATION_GET, 4)
+      {
+         pResult = Some ((aValue[0], aValue[1], aValue[2], aValue[3]));
+      }
+
+      pResult
+   }
+
+   pub fn Rotation_Set (&self, dX: f64, dY: f64, dZ: f64, dW: f64) -> bool
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_VIEWPORT, kSNEEZE_ABI_METHOD_VIEWPORT_ROTATION_SET);
+
+      pPacket.Write_Qword  (self.m_twFabricIx);
+      pPacket.Write_Double (dX);
+      pPacket.Write_Double (dY);
+      pPacket.Write_Double (dZ);
+      pPacket.Write_Double (dW);
+
+      pPacket.Send () != 0
+   }
 }
 
 // ---------------------------------------------------------------------------
@@ -597,6 +690,17 @@ impl NODE
       pPacket.Send ();
    }
 
+   /// Loads glTF or GLB bytes as this node's mesh. False when the bytes do not produce a drawable model.
+   pub fn Model (&self, aByte: &[u8]) -> bool
+   {
+      let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NODE, kSNEEZE_ABI_METHOD_NODE_MODEL);
+
+      pPacket.Write_Qword (self.m_qwComposed);
+      pPacket.Write_Bytes (aByte.as_ptr (), aByte.len ());
+
+      pPacket.Send () != 0
+   }
+
    /// Sets a PANEL node's RML+CSS source (no effect on non-panel nodes).
    pub fn Panel (&self, sRml: &str)
    {
@@ -612,7 +716,7 @@ impl NODE
    {
       let mut pValue = None;
       let nSize = nCount * 8;
-      let mut aByte = vec![0u8; nSize];
+      let aByte = vec![0u8; nSize];
       let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NODE, wMethod);
 
       pPacket.Write_Qword (self.m_qwComposed);
@@ -688,7 +792,7 @@ impl NODE
    }
 
    /// Local position. None when the node is gone.
-   pub fn Position (&self) -> Option<(f64, f64, f64)>
+   pub fn Position_Get (&self) -> Option<(f64, f64, f64)>
    {
       let mut pResult = None;
 
@@ -701,7 +805,7 @@ impl NODE
    }
 
    /// Local rotation quaternion (x, y, z, w). None when the node is gone.
-   pub fn Rotation (&self) -> Option<(f64, f64, f64, f64)>
+   pub fn Rotation_Get (&self) -> Option<(f64, f64, f64, f64)>
    {
       let mut pResult = None;
 
@@ -714,7 +818,7 @@ impl NODE
    }
 
    /// Uniform scale, which is the X axis. None when the node is gone.
-   pub fn Scale (&self) -> Option<f64>
+   pub fn Scale_Get (&self) -> Option<f64>
    {
       let mut pResult = None;
 
@@ -727,7 +831,7 @@ impl NODE
    }
 
    /// Per-axis scale. None when the node is gone.
-   pub fn Scale_Axes (&self) -> Option<(f64, f64, f64)>
+   pub fn Scale_Axes_Get (&self) -> Option<(f64, f64, f64)>
    {
       let mut pResult = None;
 
@@ -740,7 +844,7 @@ impl NODE
    }
 
    /// Bounding extents. None when the node is gone.
-   pub fn Bound (&self) -> Option<(f64, f64, f64)>
+   pub fn Bound_Get (&self) -> Option<(f64, f64, f64)>
    {
       let mut pResult = None;
 
@@ -753,19 +857,19 @@ impl NODE
    }
 
    /// Stored name. Empty when unset or the node is gone.
-   pub fn Name (&self) -> String
+   pub fn Name_Get (&self) -> String
    {
       self.Text (kSNEEZE_ABI_METHOD_NODE_NAME_GET)
    }
 
    /// Stored resource reference. Empty when unset or the node is gone.
-   pub fn Resource (&self) -> String
+   pub fn Resource_Get (&self) -> String
    {
       self.Text (kSNEEZE_ABI_METHOD_NODE_RESOURCE_GET)
    }
 
    /// Stored panel source. Empty when unset or the node is gone.
-   pub fn Panel (&self) -> String
+   pub fn Panel_Get (&self) -> String
    {
       self.Text (kSNEEZE_ABI_METHOD_NODE_PANEL_GET)
    }

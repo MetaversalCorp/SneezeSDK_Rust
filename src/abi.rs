@@ -112,11 +112,13 @@ pub const kSNEEZE_ABI_METHOD_NETWORK_IO_CLOSED              : u16 = 76;
 pub const kSNEEZE_ABI_METHOD_NETWORK_IO_ACKED               : u16 = 77;
 pub const kSNEEZE_ABI_METHOD_NETWORK_IO_FREE                : u16 = 78;
 
-// VIEWPORT methods (not implemented yet host-side).
+// VIEWPORT methods. Position and rotation are the user's camera. Pointer is
+// host -> guest only (the id of a clicked panel element).
 pub const kSNEEZE_ABI_METHOD_VIEWPORT_POSITION_GET          : u16 = 1;
 pub const kSNEEZE_ABI_METHOD_VIEWPORT_POSITION_SET          : u16 = 2;
 pub const kSNEEZE_ABI_METHOD_VIEWPORT_ROTATION_GET          : u16 = 3;
 pub const kSNEEZE_ABI_METHOD_VIEWPORT_ROTATION_SET          : u16 = 4;
+pub const kSNEEZE_ABI_METHOD_VIEWPORT_POINTER               : u16 = 5;
 
 // SCENE methods. The node-tree calls are DEPRECATED - use the FABRIC subsystem
 // instead; they remain only so already-deployed modules keep working. The scene
