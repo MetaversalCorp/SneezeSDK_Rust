@@ -611,7 +611,7 @@ impl NODE
       self.m_qwComposed != SNEEZE_OBJECTIX_ERROR  &&  self.m_qwComposed != 0
    }
 
-   pub fn Position (&self, dX: f64, dY: f64, dZ: f64)
+   pub fn Position_Set (&self, dX: f64, dY: f64, dZ: f64)
    {
       let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NODE, kSNEEZE_ABI_METHOD_NODE_POSITION);
 
@@ -623,7 +623,7 @@ impl NODE
       pPacket.Send ();
    }
 
-   pub fn Rotation (&self, dX: f64, dY: f64, dZ: f64, dW: f64)
+   pub fn Rotation_Set (&self, dX: f64, dY: f64, dZ: f64, dW: f64)
    {
       let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NODE, kSNEEZE_ABI_METHOD_NODE_ROTATION);
 
@@ -636,7 +636,7 @@ impl NODE
       pPacket.Send ();
    }
 
-   pub fn Scale (&self, dScale: f64)
+   pub fn Scale_Set (&self, dScale: f64)
    {
       let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NODE, kSNEEZE_ABI_METHOD_NODE_SCALE);
 
@@ -646,7 +646,7 @@ impl NODE
       pPacket.Send ();
    }
 
-   pub fn Scale_Axes (&self, dX: f64, dY: f64, dZ: f64)
+   pub fn Scale_Axes_Set (&self, dX: f64, dY: f64, dZ: f64)
    {
       let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NODE, kSNEEZE_ABI_METHOD_NODE_SCALE_AXES);
 
@@ -658,10 +658,10 @@ impl NODE
       pPacket.Send ();
    }
 
-   pub fn Bound (&self, dX: f64, dY: f64, dZ: f64)
+   pub fn Bound_Set (&self, dX: f64, dY: f64, dZ: f64)
    {
       let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NODE, kSNEEZE_ABI_METHOD_NODE_BOUND);
-      
+
       pPacket.Write_Qword  (self.m_qwComposed);
       pPacket.Write_Double (dX);
       pPacket.Write_Double (dY);
@@ -670,7 +670,7 @@ impl NODE
       pPacket.Send ();
    }
 
-   pub fn Name (&self, sName: &str)
+   pub fn Name_Set (&self, sName: &str)
    {
       let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NODE, kSNEEZE_ABI_METHOD_NODE_NAME);
 
@@ -680,7 +680,7 @@ impl NODE
       pPacket.Send ();
    }
 
-   pub fn Resource (&self, sUrl: &str)
+   pub fn Resource_Set (&self, sUrl: &str)
    {
       let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NODE, kSNEEZE_ABI_METHOD_NODE_RESOURCE);
 
@@ -702,14 +702,64 @@ impl NODE
    }
 
    /// Sets a PANEL node's RML+CSS source (no effect on non-panel nodes).
-   pub fn Panel (&self, sRml: &str)
+   pub fn Panel_Set (&self, sRml: &str)
    {
       let mut pPacket = PACKET::New (kSNEEZE_ABI_TYPE_NODE, kSNEEZE_ABI_METHOD_NODE_PANEL);
 
       pPacket.Write_Qword (self.m_qwComposed);
       pPacket.Write_Text  (sRml);
-      
+
       pPacket.Send ();
+   }
+
+   // Original setter names. Same ABI method numbers as the _Set forms, so a
+   // module already built against them keeps working. Scheduled for removal.
+   #[deprecated(note = "scheduled for removal; use Position_Set")]
+   pub fn Position (&self, dX: f64, dY: f64, dZ: f64)
+   {
+      self.Position_Set (dX, dY, dZ);
+   }
+
+   #[deprecated(note = "scheduled for removal; use Rotation_Set")]
+   pub fn Rotation (&self, dX: f64, dY: f64, dZ: f64, dW: f64)
+   {
+      self.Rotation_Set (dX, dY, dZ, dW);
+   }
+
+   #[deprecated(note = "scheduled for removal; use Scale_Set")]
+   pub fn Scale (&self, dScale: f64)
+   {
+      self.Scale_Set (dScale);
+   }
+
+   #[deprecated(note = "scheduled for removal; use Scale_Axes_Set")]
+   pub fn Scale_Axes (&self, dX: f64, dY: f64, dZ: f64)
+   {
+      self.Scale_Axes_Set (dX, dY, dZ);
+   }
+
+   #[deprecated(note = "scheduled for removal; use Bound_Set")]
+   pub fn Bound (&self, dX: f64, dY: f64, dZ: f64)
+   {
+      self.Bound_Set (dX, dY, dZ);
+   }
+
+   #[deprecated(note = "scheduled for removal; use Name_Set")]
+   pub fn Name (&self, sName: &str)
+   {
+      self.Name_Set (sName);
+   }
+
+   #[deprecated(note = "scheduled for removal; use Resource_Set")]
+   pub fn Resource (&self, sUrl: &str)
+   {
+      self.Resource_Set (sUrl);
+   }
+
+   #[deprecated(note = "scheduled for removal; use Panel_Set")]
+   pub fn Panel (&self, sRml: &str)
+   {
+      self.Panel_Set (sRml);
    }
 
    fn Doubles (&self, wMethod: u16, nCount: usize) -> Option<Vec<f64>>
